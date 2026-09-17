@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+# brand-bot — build, preview, and publish your card.
+set -euo pipefail
+
+here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$here"
+
+VAR_NAME="BRAND_CONFIG"
+
+usage() {
+  cat <<'EOF'
+brand-bot — a QR-to-contact-card you host yourself
+
+  build              Render config.json -> dist/
+  serve [port]       Build, then serve dist/ locally (default 8765)
+  qr                 Regenerate qr.svg from your config's domain
+  push-config        Upload config.json to the GitHub repo variable
+  pull-config        Download the repo variable into config.json
+  show-config        Print the config currently stored on GitHub
+  status             Show where things stand
+
+Your config.json is gitignored. It lives in a GitHub Actions *variable*,
+not in the repo, so forks and clones never carry your identity.
+
+  cp config.example.json config.json   # then edit it
+  ./brand-bot push-config              # publish it to the repo
+EOF
+}
+
+need() {
+  command -v "$1" >/dev/null 2>&1 || {
+    echo "error: '$1' is required but not installed." >&2
+    [ "$1" = "gh" ] && echo "  https://cli.github.com/" >&2
+    exit 1
+  }
+}
+
+repo_slug() {
+  need gh
+  gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || {
+    echo "error: not inside a GitHub repo, or gh is not authenticated." >&2
+    echo "  try: gh auth login" >&2
+    exit 1
+  }
+}
+
+cmd_build() {
+  need node
+  node build.mjs
+}
+
+cmd_serve() {
+  cmd_build
+  port="${1:-8765}"
+  echo
+  echo "serving dist/ on http://127.0.0.1:$port"
+  if command -v python3 >/dev/null 2>&1; then
+    python3 -m http.server "$port" --bind 127.0.0.1 --directory dist
+  else
+    node -e '
+      const http=require("http"),fs=require("fs"),path=require("path");
+      const port=Number(process.argv[1]);
+      const T={".html":"text/html; charset=utf-8",".svg":"image/svg+xml",".vcf":"text/vcard"};
+      http.createServer((q,s)=>{
+        let p=decodeURIComponent(q.url.split("?")[0].split("#")[0]);
+        if(p.endsWith("/"))p+="index.html";
+        const f=path.join("dist",path.normalize(p).replace(/^(\.\.[\/\\])+/,""));
+        fs.readFile(f,(e,d)=>{
+          if(e){s.writeHead(404);return s.end("404");}
+          s.writeHead(200,{"content-type":T[path.extname(f)]||"application/octet-stream"});
+          s.end(d);
+        });
+      }).listen(port,"127.0.0.1");
+    ' "$port"
+  fi
+}
+
+cmd_qr() {
+  need node
+  need qrencode
+  domain="$(node -e 'console.log(JSON.parse(require("fs").readFileSync("config.json","utf8")).domain)')"
+  url="https://${domain}/"
+  qrencode -t SVG -o qr.svg -m 2 -s 8 --level=M "$url"
+  if command -v zbarimg >/dev/null 2>&1; then
+    tmp="$(mktemp -d)"; trap 'rm -rf "$tmp"' RETURN
+    qrencode -t PNG -o "$tmp/q.png" -m 2 -s 8 --level=M "$url"
+    got="$(zbarimg --quiet --raw "$tmp/q.png" | tr -d '\n')"
+    [ "$got" = "$url" ] || { echo "QR MISMATCH: got '$got' wanted '$url'" >&2; exit 1; }
+  fi
+  echo "qr.svg -> $url"
+}
+
+cmd_push_config() {
+  need gh
+  [ -f config.json ] || { echo "error: no config.json. cp config.example.json config.json" >&2; exit 1; }
+  need node
+  node -e 'JSON.parse(require("fs").readFileSync("config.json","utf8"))' || {
+    echo "error: config.json is not valid JSON" >&2; exit 1; }
+
+  # Build first: never publish a config that cannot render.
+  node build.mjs >/dev/null
+
+  slug="$(repo_slug)"
+  gh variable set "$VAR_NAME" --repo "$slug" < config.json
+  echo "pushed config.json -> $slug variable $VAR_NAME"
+  echo
+  echo "the next Actions run will render and deploy it."
+  echo "  ./brand-bot status"
+}
+
+cmd_pull_config() {
+  need gh
+  slug="$(repo_slug)"
+  if [ -f config.json ]; then
+    cp config.json "config.json.bak.$(date +%s)"
+    echo "(existing config.json backed up)"
+  fi
+  gh variable get "$VAR_NAME" --repo "$slug" > config.json
+  echo "pulled $VAR_NAME -> config.json"
+}
+
+cmd_show_config() {
+  need gh
+  slug="$(repo_slug)"
+  gh variable get "$VAR_NAME" --repo "$slug"
+}
+
+cmd_status() {
+  need gh
+  slug="$(repo_slug)"
+  echo "repo:          $slug"
+
+  if [ -f config.json ]; then
+    echo "local config:  config.json present"
+  else
+    echo "local config:  MISSING (cp config.example.json config.json)"
+  fi
+
+  if gh variable get "$VAR_NAME" --repo "$slug" >/dev/null 2>&1; then
+    remote="$(gh variable get "$VAR_NAME" --repo "$slug")"
+    if [ -f config.json ] && [ "$remote" = "$(cat config.json)" ]; then
+      echo "repo variable: $VAR_NAME in sync with config.json"
+    else
+      echo "repo variable: $VAR_NAME set, DIFFERS from local (./brand-bot push-config)"
+    fi
+  else
+    echo "repo variable: $VAR_NAME NOT SET (./brand-bot push-config)"
+  fi
+
+  pages="$(gh api "repos/$slug/pages" --jq '.html_url + "  [" + .status + "]"' 2>/dev/null || echo "not enabled")"
+  echo "pages:         $pages"
+}
+
+case "${1:-}" in
+  build)         shift; cmd_build "$@" ;;
+  serve)         shift; cmd_serve "$@" ;;
+  qr)            shift; cmd_qr "$@" ;;
+  push-config)   shift; cmd_push_config "$@" ;;
+  pull-config)   shift; cmd_pull_config "$@" ;;
+  show-config)   shift; cmd_show_config "$@" ;;
+  status)        shift; cmd_status "$@" ;;
+  ""|-h|--help|help) usage ;;
+  *) echo "unknown command: $1" >&2; echo; usage; exit 1 ;;
+esac

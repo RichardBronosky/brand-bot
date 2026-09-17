@@ -1,0 +1,75 @@
+name: Build and deploy card
+
+on:
+  push:
+    branches: [main]
+  # Config changes produce no commit, so run this by hand after push-config.
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; always finish the newest.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+
+      - name: Check config is present
+        if: vars.BRAND_CONFIG == ''
+        run: |
+          echo "::error::BRAND_CONFIG repository variable is not set."
+          echo ""
+          echo "To set it:"
+          echo "  cp config.example.json config.json"
+          echo "  \$EDITOR config.json"
+          echo "  ./brand-bot push-config"
+          echo ""
+          echo "Or paste it at: Settings > Secrets and variables > Actions > Variables"
+          exit 1
+
+      - name: Generate QR
+        env:
+          BRAND_CONFIG: ${{ vars.BRAND_CONFIG }}
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq qrencode zbar-tools
+          domain=$(node -e 'console.log(JSON.parse(process.env.BRAND_CONFIG).domain)')
+          url="https://$domain/"
+          qrencode -t SVG -o qr.svg -m 2 -s 8 --level=M "$url"
+          qrencode -t PNG -o /tmp/qr.png -m 2 -s 8 --level=M "$url"
+          got=$(zbarimg --quiet --raw /tmp/qr.png | tr -d '\n')
+          if [ "$got" != "$url" ]; then
+            echo "::error::QR encodes '$got' but config says '$url'"
+            exit 1
+          fi
+          echo "qr.svg -> $got"
+
+      - name: Build
+        env:
+          BRAND_CONFIG: ${{ vars.BRAND_CONFIG }}
+        run: node build.mjs
+
+      - uses: actions/upload-pages-artifact@v5
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v5

@@ -1,0 +1,59 @@
+{
+  "$comment": "Copy this to config.json, edit it, then run: ./brand-bot push-config",
+
+  "name": "Your Name",
+  "tagline": "Nice to meet you.",
+  "domain": "you.example.com",
+
+  "professional": {
+    "label": "Professional",
+    "icon": "💼",
+    "blurb": "Work, code, hiring, speaking",
+    "links": [
+      {
+        "icon": "🐙",
+        "label": "GitHub",
+        "sub": "@yourhandle",
+        "href": "https://github.com/yourhandle"
+      },
+      {
+        "icon": "🔗",
+        "label": "LinkedIn",
+        "sub": "in/yourhandle",
+        "href": "https://www.linkedin.com/in/yourhandle"
+      },
+      {
+        "icon": "✉️",
+        "label": "Email",
+        "sub": "you@example.com",
+        "href": "mailto:you@example.com"
+      }
+    ]
+  },
+
+  "personal": {
+    "label": "Personal",
+    "icon": "🌻",
+    "blurb": "Friends, makers, community",
+    "links": [
+      {
+        "icon": "💬",
+        "label": "Signal",
+        "sub": "Preferred for messaging",
+        "href": "https://signal.me/#p/+10000000000"
+      },
+      {
+        "icon": "✉️",
+        "label": "Email",
+        "sub": "you@example.com",
+        "href": "mailto:you@example.com"
+      }
+    ]
+  },
+
+  "vcard": {
+    "enabled": true,
+    "label": "Save my contact card (.vcf)",
+    "email": "you@example.com"
+  }
+}

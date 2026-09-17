@@ -1,0 +1,431 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>{{NAME}}</title>
+<meta name="description" content="{{NAME}} — how to connect.">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#0b0d10">
+
+<meta property="og:type" content="profile">
+<meta property="og:title" content="{{NAME}}">
+<meta property="og:description" content="How to connect with me.">
+<meta property="og:url" content="https://{{DOMAIN}}/">
+
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👋</text></svg>">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-192.svg">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+
+<style>
+  :root {
+    --bg: #ffffff;
+    --fg: #0b0d10;
+    --muted: #5b6672;
+    --line: #e3e8ee;
+    --card: #f7f9fb;
+    --accent: #1f6feb;
+    --accent-fg: #ffffff;
+    --radius: 14px;
+    --maxw: 34rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0b0d10;
+      --fg: #e9eef5;
+      --muted: #9aa7b4;
+      --line: #222a33;
+      --card: #141922;
+      --accent: #4c8dff;
+      --accent-fg: #06090d;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0b0d10;
+    --fg: #e9eef5;
+    --muted: #9aa7b4;
+    --line: #222a33;
+    --card: #141922;
+    --accent: #4c8dff;
+    --accent-fg: #06090d;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body { min-height: 100%; }
+
+  body {
+    margin: 0;
+    min-height: 100vh;
+    min-height: 100dvh;
+    background: var(--bg);
+    color: var(--fg);
+    font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+          "Helvetica Neue", Arial, sans-serif;
+    -webkit-text-size-adjust: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: max(1.5rem, env(safe-area-inset-top)) 16px
+             max(4rem, env(safe-area-inset-bottom));
+  }
+
+  /* Auto margins centre a short card and collapse to zero on a long one,
+     so a card with many links scrolls instead of being clipped. */
+  main {
+    width: 100%;
+    max-width: var(--maxw);
+    margin: auto 0;
+  }
+
+  header { text-align: center; margin-bottom: 1.75rem; }
+
+  .name {
+    margin: 0 0 .35rem;
+    font-size: clamp(1.6rem, 7vw, 2.1rem);
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+
+  .tagline { margin: 0; color: var(--muted); font-size: .95rem; }
+
+  /* ---- panels ---- */
+  .panel { display: none; }
+  .panel.is-active { display: block; animation: rise .22s ease-out; }
+
+  @keyframes rise {
+    from { opacity: 0; transform: translateY(6px); }
+    to   { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .panel.is-active { animation: none; }
+  }
+
+  .prompt {
+    text-align: center;
+    color: var(--muted);
+    font-size: .9rem;
+    margin: 0 0 .85rem;
+  }
+
+  .choices { display: grid; gap: .75rem; }
+
+  .choice {
+    display: flex;
+    align-items: center;
+    gap: .9rem;
+    width: 100%;
+    padding: 1.15rem 1.1rem;
+    background: var(--card);
+    color: inherit;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    font: inherit;
+    text-align: left;
+    text-decoration: none;
+    cursor: pointer;
+  }
+  .choice:hover { border-color: var(--accent); }
+  .choice:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  .choice .ico { font-size: 1.5rem; line-height: 1; flex: none; }
+  .choice .txt { display: flex; flex-direction: column; gap: .15rem; min-width: 0; }
+  .choice .lbl { font-weight: 600; }
+  .choice .sub { color: var(--muted); font-size: .85rem; }
+
+  /* ---- links ---- */
+  .links { display: grid; gap: .6rem; margin: 0 0 1.25rem; padding: 0; list-style: none; }
+
+  .link {
+    display: flex;
+    align-items: center;
+    gap: .9rem;
+    padding: .95rem 1.1rem;
+    background: var(--card);
+    color: inherit;
+    border: 1px solid var(--line);
+    border-radius: var(--radius);
+    text-decoration: none;
+  }
+  .link:hover { border-color: var(--accent); }
+  .link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .link .ico { font-size: 1.25rem; flex: none; }
+  .link .txt { display: flex; flex-direction: column; min-width: 0; }
+  .link .lbl { font-weight: 600; font-size: .95rem; }
+  .link .sub {
+    color: var(--muted); font-size: .82rem;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+
+  .back {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: none; border: 0; padding: .5rem 0;
+    color: var(--muted); font: inherit; font-size: .9rem; cursor: pointer;
+  }
+  .back:hover { color: var(--fg); }
+  .back:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 6px; }
+
+  .vcard {
+    display: block;
+    width: 100%;
+    margin-top: 1.25rem;
+    padding: .8rem 1rem;
+    border: 1px dashed var(--line);
+    border-radius: var(--radius);
+    text-align: center;
+    color: var(--muted);
+    font-size: .88rem;
+    text-decoration: none;
+  }
+  .vcard:hover { border-color: var(--accent); color: var(--fg); }
+  .vcard:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  footer {
+    width: 100%;
+    max-width: var(--maxw);
+    margin-top: 2rem;
+    padding: 0 16px;
+    text-align: center; color: var(--muted); font-size: .78rem;
+  }
+  footer a { color: inherit; }
+
+  .credit {
+    margin: 0;
+    padding: 0 16px;
+    line-height: 1.45;
+  }
+  .credit a { text-decoration: underline; text-underline-offset: 2px; }
+
+  /* ---- qr ---- */
+  .qr-toggle {
+    position: fixed;
+    top: max(.75rem, env(safe-area-inset-top));
+    right: max(.75rem, env(safe-area-inset-right));
+    z-index: 5;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 44px;
+    height: 44px;
+    border-radius: 10px;
+    color: var(--muted);
+    text-decoration: none;
+  }
+  .qr-toggle:hover { color: var(--fg); background: var(--card); }
+  .qr-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+  /* The QR screen is meant to be screenshotted and set as a lock screen, so
+     it fills the viewport and keeps the code clear of the areas a lock screen
+     covers: the clock at the top and the shortcut row at the bottom. */
+  .panel-qr.is-active {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    flex-direction: column;
+    background: var(--bg);
+    z-index: 10;
+    animation: none;
+  }
+
+  .qr-stage {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    /* Top padding clears the lock-screen clock; bottom clears shortcuts. */
+    padding: clamp(5rem, 22vh, 11rem) 24px clamp(4rem, 14vh, 8rem);
+  }
+
+  .qr-name {
+    margin: 0;
+    font-size: 1.05rem;
+    font-weight: 600;
+    text-align: center;
+  }
+
+  .qr-code {
+    width: min(68vw, 20rem);
+    aspect-ratio: 1;
+    padding: 12px;
+    background: #fff;
+    border-radius: 12px;
+    display: flex;
+  }
+  .qr-code svg {
+    width: 100%;
+    height: 100%;
+    display: block;
+    shape-rendering: crispEdges;
+  }
+
+  .qr-domain {
+    margin: 0;
+    color: var(--muted);
+    font-size: .85rem;
+    text-align: center;
+    word-break: break-all;
+  }
+
+  .qr-actions {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: .25rem;
+    padding: 0 16px max(1rem, env(safe-area-inset-bottom));
+  }
+
+  .qr-hint {
+    margin: 0;
+    color: var(--muted);
+    font-size: .8rem;
+    text-align: center;
+    line-height: 1.5;
+  }
+  .qr-hint-step, .qr-hint-os { display: block; }
+  .qr-hint-os { opacity: .75; }
+
+  /* Hide the chrome when this is actually being captured as a wallpaper. */
+  @media print {
+    .qr-actions, .qr-toggle { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<a class="qr-toggle" href="#/qr" aria-label="Show QR code">
+  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor">
+    <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm-2 8h8v8H3v-8zm2 2v4h4v-4H5zM13 3h8v8h-8V3zm2 2v4h4V5h-4z"/>
+    <path d="M13 13h3v3h-3v-3zm5 0h3v3h-3v-3zm-5 5h3v3h-3v-3zm5 0h3v3h-3v-3z"/>
+  </svg>
+</a>
+
+<main>
+  <header>
+    <h1 class="name">{{NAME}}</h1>
+    <p class="tagline">{{TAGLINE}}</p>
+  </header>
+
+  <!-- choose -->
+  <section id="panel-home" class="panel" aria-labelledby="prompt-home">
+    <p class="prompt" id="prompt-home">How do you know me?</p>
+    <div class="choices">
+      <a class="choice" href="#/professional">
+        <span class="ico" aria-hidden="true">{{PRO_ICON}}</span>
+        <span class="txt">
+          <span class="lbl">{{PRO_LABEL}}</span>
+          <span class="sub">{{PRO_BLURB}}</span>
+        </span>
+      </a>
+      <a class="choice" href="#/personal">
+        <span class="ico" aria-hidden="true">{{PER_ICON}}</span>
+        <span class="txt">
+          <span class="lbl">{{PER_LABEL}}</span>
+          <span class="sub">{{PER_BLURB}}</span>
+        </span>
+      </a>
+    </div>
+  </section>
+
+  <!-- professional -->
+  <section id="panel-professional" class="panel" aria-labelledby="prompt-pro">
+    <p class="prompt" id="prompt-pro">{{PRO_LABEL}}</p>
+    <ul class="links">
+{{PRO_LINKS}}
+    </ul>
+{{VCARD}}
+    <button class="back" type="button" data-back>← Back</button>
+  </section>
+
+  <!-- personal -->
+  <section id="panel-personal" class="panel" aria-labelledby="prompt-per">
+    <p class="prompt" id="prompt-per">{{PER_LABEL}}</p>
+    <ul class="links">
+{{PER_LINKS}}
+    </ul>
+{{VCARD}}
+    <button class="back" type="button" data-back>← Back</button>
+  </section>
+
+
+  <!-- qr -->
+  <section id="panel-qr" class="panel panel-qr" aria-labelledby="prompt-qr">
+    <div class="qr-stage">
+      <p class="qr-name">{{NAME}}</p>
+      <div class="qr-code">{{QR_SVG}}</div>
+      <p class="qr-domain">{{DOMAIN}}</p>
+    </div>
+    <div class="qr-actions">
+      <button class="back" type="button" data-back>← My card</button>
+      <p class="qr-hint" id="prompt-qr">
+        <span class="qr-hint-step">Screenshot this screen.</span>
+        <span class="qr-hint-os" data-os-hint></span>
+      </p>
+    </div>
+  </section>
+</main>
+
+<!-- Built with brand-bot — https://github.com/RichardBronosky/brand-bot -->
+{{CREDIT}}
+
+<script>
+(function () {
+  var PANELS = {
+    '': 'panel-home',
+    '#/': 'panel-home',
+    '#/professional': 'panel-professional',
+    '#/personal': 'panel-personal',
+    '#/qr': 'panel-qr'
+  };
+
+  function show() {
+    var id = PANELS[location.hash] || 'panel-home';
+    Object.keys(PANELS).forEach(function (k) {
+      var el = document.getElementById(PANELS[k]);
+      if (el) el.classList.remove('is-active');
+    });
+    var target = document.getElementById(id);
+    if (target) target.classList.add('is-active');
+  }
+
+  try { sessionStorage.setItem('entry-hash', location.hash || '#/'); } catch (e) {}
+
+  window.addEventListener('hashchange', show);
+  show();
+
+  // The installed app launches straight into #/qr, so there is usually no
+  // history to go back to. Fall back to the card.
+  document.querySelectorAll('[data-back]').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var entry = sessionStorage.getItem('entry-hash');
+      if (history.length > 1 && location.hash !== entry) history.back();
+      else location.hash = '#/';
+    });
+  });
+
+  var osHint = document.querySelector('[data-os-hint]');
+  if (osHint) {
+    var ua = navigator.userAgent;
+    if (/iPhone|iPad|iPod/.test(ua)) {
+      osHint.textContent = 'Photos → Share → Use as Wallpaper → Set Lock Screen.';
+    } else if (/Android/.test(ua)) {
+      osHint.textContent = 'Photos → ⋮ → Use as → Lock screen.';
+    } else {
+      osHint.textContent = 'Then set it as your lock screen wallpaper.';
+    }
+  }
+
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    window.addEventListener('load', function () {
+      navigator.serviceWorker.register('sw.js').catch(function () {});
+    });
+  }
+})();
+</script>
+
+</body>
+</html>
