@@ -6,7 +6,8 @@
 //   2. ./config.json
 //   3. error
 
-import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync } from "node:fs";
+import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -71,6 +72,17 @@ function validate(config, source) {
       "config (" + source + ") still contains example placeholder(s): " + hits.join(", ") +
       "\n\nEdit your config so it describes you, then build again."
     );
+  }
+  if (config.backend) {
+    if (!/^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/i.test(config.backend.url || "")) {
+      die("backend.url must be your https://PROJECT.supabase.co URL");
+    }
+    const key = String(config.backend.publishableKey || "");
+    let role;
+    try { role = JSON.parse(Buffer.from(key.split(".")[1], "base64url").toString()).role; } catch {}
+    if (!/^sb_publishable_[A-Za-z0-9_-]+$/.test(key) && role !== "anon") {
+      die("backend.publishableKey must be a publishable key or legacy anon key, never a secret/service-role key");
+    }
   }
 }
 
@@ -284,6 +296,10 @@ const template = readFileSync(join(root, "template.html"), "utf8");
 
 const pro = config.professional || {};
 const per = config.personal || {};
+const browserConfig = JSON.stringify({
+  backend: config.backend ? { url: config.backend.url.replace(/\/$/, ""), publishableKey: config.backend.publishableKey } : null,
+  version: createHash("sha256").update(template).update(readFileSync(join(root, "app.js"))).update(readFileSync(join(root, "app.css"))).digest("hex").slice(0, 12),
+}).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 
 const html = template
   .replaceAll("{{NAME}}", esc(config.name))
@@ -299,7 +315,8 @@ const html = template
   .replaceAll("{{PER_LINKS}}", renderLinks(per.links))
   .replaceAll("{{VCARD}}", renderVcard(config))
   .replaceAll("{{CREDIT}}", renderCredit(config))
-  .replaceAll("{{QR_SVG}}", qrSvg(config));
+  .replaceAll("{{QR_SVG}}", qrSvg(config))
+  .replaceAll("{{APP_CONFIG}}", browserConfig);
 
 const leftover = html.match(/\{\{[A-Z_]+\}\}/g);
 if (leftover) die("template has unreplaced placeholders: " + [...new Set(leftover)].join(", "));
@@ -310,8 +327,24 @@ writeFileSync(join(OUT, "CNAME"), config.domain + "\n");
 writeFileSync(join(OUT, "manifest.webmanifest"), manifest(config));
 writeFileSync(join(OUT, "icon-192.svg"), icon(config, 192));
 writeFileSync(join(OUT, "icon-512.svg"), icon(config, 512));
-if (config.vcard?.enabled !== false) writeFileSync(join(OUT, "contact.vcf"), buildVcf(config));
-for (const f of ["qr.svg", "sw.js"]) {
+const vcf = config.vcard?.enabled !== false ? buildVcf(config) : null;
+if (vcf !== null) writeFileSync(join(OUT, "contact.vcf"), vcf);
+else rmSync(join(OUT, "contact.vcf"), { force: true });
+
+const assets = ["./", "./index.html", "./app.js", "./app.css", "./vendor/qrcodegen.js"];
+if (vcf !== null) assets.push("./contact.vcf");
+const workerTemplate = readFileSync(join(root, "sw.js"), "utf8");
+// Changing the card or worker creates a fresh cache and retires old contact data.
+const appFiles = ["app.js", "app.css", "vendor/qrcodegen.js"];
+const hash = createHash("sha256").update(html).update(vcf ?? "").update(workerTemplate);
+for (const f of appFiles) hash.update(readFileSync(join(root, f)));
+const revision = hash.digest("hex").slice(0, 16);
+writeFileSync(join(OUT, "sw.js"), workerTemplate
+  .replace('"{{CACHE}}"', JSON.stringify(`brand-bot-${revision}`))
+  .replace('"{{ASSETS}}"', JSON.stringify(assets)));
+
+mkdirSync(join(OUT, "vendor"), { recursive: true });
+for (const f of ["qr.svg", ...appFiles]) {
   if (existsSync(join(root, f))) copyFileSync(join(root, f), join(OUT, f));
 }
 

@@ -1,0 +1,29 @@
+name: Check conversation feature
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: "24"
+      - name: Install test tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq qrencode zbar-tools postgresql
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
+      - name: Generate fixture QR
+        run: qrencode -t SVG -o qr.svg -m 2 -s 8 --level=M 'https://test.example.org/'
+      - name: Build and offline cache checks
+        run: node tests/build.mjs
+      - name: SQL permissions
+        run: bash tests/database.sh
+      - name: Browser flows and rendered QR
+        env:
+          CHROMIUM: google-chrome
+        run: node tests/browser.mjs

@@ -20,7 +20,9 @@ already own and a free GitHub account. No server, no hosting bill, no framework.
 | `build.mjs` | Renders template + config into `dist/`. No dependencies. |
 | `brand-bot` | CLI: build, preview, publish your config. |
 | `.github/workflows/deploy.yml` | Renders and deploys to GitHub Pages. |
-| `sw.js` | Service worker, so the installed app works offline. |
+| `sw.js` | Service-worker template, rendered with the assets this build produces. |
+| `app.js`, `app.css` | Card navigation and optional private meeting tools. |
+| `supabase/schema.sql` | Optional conversation database and SQL authorization. |
 
 The published page is static HTML. Contact links are rendered at build time, not
 fetched by the browser.
@@ -156,6 +158,23 @@ are tapping it, you are standing in front of someone. The card is one tap back.
 
 ---
 
+## Optional conversation tools
+
+Keep the static card as-is, or connect a free Supabase project to add private
+meeting tools. See [setup and architecture](supabase/README.md).
+
+On your authenticated phone, the installed app opens a fresh conversation QR.
+Timestamp and optional phone location stay private in the database. Visitors see
+the usual card and any messages or project links you share. The same invitation
+works tomorrow. Your tools show page opens, contact-link taps, and message-page
+receipts, and let you save private notes or capture a bug without interrupting
+the conversation.
+
+Public visits submit UI events only; they never read database records or create
+conversations. There is no CAPTCHA, visitor sign-up, or custom backend server.
+Supabase supplies the hosted API and owner authentication; SQL functions enforce
+permissions. Without backend configuration the card retains its static behavior.
+
 ## Development
 
 ```sh
@@ -176,6 +195,18 @@ regenerate the QR. CI installs them itself.
 ## For an agent working in a clone of this repo
 
 Read this before changing anything.
+
+Checks for the optional feature (require a generated local `qr.svg`):
+
+```sh
+node tests/build.mjs                 # Node 18+
+node tests/browser.mjs               # Node 22+, Chromium, zbarimg
+bash tests/database.sh              # PostgreSQL binaries in PATH
+```
+
+The browser checks use mocked Supabase HTTP responses and a real browser. The
+SQL checks use a disposable real PostgreSQL database with test Auth roles. A live
+Supabase project is still needed to check its hosted API and Auth configuration.
 
 **The build must stay dependency-free.** `build.mjs` uses only Node builtins.
 Do not add a `package.json`, a bundler, or a templating library. CI runs

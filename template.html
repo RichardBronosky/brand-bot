@@ -15,6 +15,8 @@
 
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>👋</text></svg>">
 <link rel="manifest" href="manifest.webmanifest">
+<link rel="stylesheet" href="app.css">
+<meta name="referrer" content="no-referrer">
 <link rel="apple-touch-icon" href="icon-192.svg">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -310,6 +312,53 @@
     <p class="tagline">{{TAGLINE}}</p>
   </header>
 
+  <section id="shared-messages" hidden aria-labelledby="shared-heading">
+    <h2 id="shared-heading">Shared with you</h2>
+    <p id="shared-status" role="status"></p>
+    <ul id="shared-list" class="message-list"></ul>
+  </section>
+
+  <section id="panel-owner" class="panel" aria-labelledby="owner-heading">
+    <h2 id="owner-heading">Meeting tools</h2>
+    <p id="owner-status" role="status" aria-live="polite"></p>
+    <form id="owner-login" hidden>
+      <p>Sign in to your private meeting tools.</p>
+      <label>Email<input name="email" type="email" autocomplete="username" required></label>
+      <label>Password<input name="password" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Sign in</button>
+    </form>
+    <div id="owner-tools" hidden>
+      <div class="tool-row">
+        <button id="new-session" type="button">New conversation QR</button>
+        <button id="show-session-qr" type="button" hidden>Show this QR</button>
+      </div>
+      <p id="session-info"></p>
+      <div id="session-editor" hidden>
+        <form id="notes-form">
+          <label>Name / conversation<input id="session-label" maxlength="200"></label>
+          <label>Private notes<textarea id="session-notes" rows="4" maxlength="20000"></textarea></label>
+          <button type="submit">Save notes</button>
+          <span id="notes-status" role="status"></span>
+        </form>
+        <form id="message-form">
+          <label>Message to share<textarea id="message-body" rows="2" maxlength="4000" required></textarea></label>
+          <label>Project URL (optional)<input id="message-url" type="url" maxlength="2000" placeholder="https://…"></label>
+          <button type="submit">Send to their page</button>
+        </form>
+        <h3>Shared messages</h3>
+        <ul id="owner-messages" class="message-list"></ul>
+        <h3>Recent activity</h3>
+        <p class="activity-help">Link taps show intent; they do not confirm a sent message, follow, or saved contact.</p>
+        <ul id="session-events" class="event-list" aria-live="polite"></ul>
+      </div>
+      <details open><summary>Recent conversations</summary><ul id="session-list" class="event-list"></ul></details>
+      <details id="public-activity"><summary>Public contact activity</summary><ul id="public-events" class="event-list"></ul></details>
+      <details id="bug-history"><summary>Saved bug reports</summary><ul id="bug-list" class="event-list"></ul></details>
+      <button id="owner-logout" type="button">Sign out</button>
+    </div>
+    <a class="back" href="#/">← My card</a>
+  </section>
+
   <!-- choose -->
   <section id="panel-home" class="panel" aria-labelledby="prompt-home">
     <p class="prompt" id="prompt-home">How do you know me?</p>
@@ -356,10 +405,12 @@
   <section id="panel-qr" class="panel panel-qr" aria-labelledby="prompt-qr">
     <div class="qr-stage">
       <p class="qr-name">{{NAME}}</p>
-      <div class="qr-code">{{QR_SVG}}</div>
+      <div class="qr-code" id="qr-code">{{QR_SVG}}</div>
       <p class="qr-domain">{{DOMAIN}}</p>
     </div>
     <div class="qr-actions">
+      <p id="qr-status" role="status"></p>
+      <a id="qr-owner-tools" class="back" href="#/owner" hidden>Meeting tools</a>
       <button class="back" type="button" data-back>← My card</button>
       <p class="qr-hint" id="prompt-qr">
         <span class="qr-hint-step">Screenshot this screen.</span>
@@ -372,60 +423,18 @@
 <!-- Built with brand-bot — https://github.com/RichardBronosky/brand-bot -->
 {{CREDIT}}
 
-<script>
-(function () {
-  var PANELS = {
-    '': 'panel-home',
-    '#/': 'panel-home',
-    '#/professional': 'panel-professional',
-    '#/personal': 'panel-personal',
-    '#/qr': 'panel-qr'
-  };
-
-  function show() {
-    var id = PANELS[location.hash] || 'panel-home';
-    Object.keys(PANELS).forEach(function (k) {
-      var el = document.getElementById(PANELS[k]);
-      if (el) el.classList.remove('is-active');
-    });
-    var target = document.getElementById(id);
-    if (target) target.classList.add('is-active');
-  }
-
-  try { sessionStorage.setItem('entry-hash', location.hash || '#/'); } catch (e) {}
-
-  window.addEventListener('hashchange', show);
-  show();
-
-  // The installed app launches straight into #/qr, so there is usually no
-  // history to go back to. Fall back to the card.
-  document.querySelectorAll('[data-back]').forEach(function (b) {
-    b.addEventListener('click', function () {
-      var entry = sessionStorage.getItem('entry-hash');
-      if (history.length > 1 && location.hash !== entry) history.back();
-      else location.hash = '#/';
-    });
-  });
-
-  var osHint = document.querySelector('[data-os-hint]');
-  if (osHint) {
-    var ua = navigator.userAgent;
-    if (/iPhone|iPad|iPod/.test(ua)) {
-      osHint.textContent = 'Photos → Share → Use as Wallpaper → Set Lock Screen.';
-    } else if (/Android/.test(ua)) {
-      osHint.textContent = 'Photos → ⋮ → Use as → Lock screen.';
-    } else {
-      osHint.textContent = 'Then set it as your lock screen wallpaper.';
-    }
-  }
-
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
-    window.addEventListener('load', function () {
-      navigator.serviceWorker.register('sw.js').catch(function () {});
-    });
-  }
-})();
-</script>
-
+<a id="owner-entry" class="owner-entry" href="#/owner" hidden>My meeting tools</a>
+<button id="bug-toggle" type="button" hidden>Report a problem</button>
+<dialog id="bug-dialog">
+  <form id="bug-form">
+    <h2>Report a problem</h2>
+    <label>What went wrong?<textarea id="bug-description" rows="4" maxlength="4000" required></textarea></label>
+    <p id="bug-status" role="status"></p>
+    <div class="tool-row"><button type="submit">Save report</button><button id="bug-cancel" type="button">Cancel</button></div>
+  </form>
+</dialog>
+<script type="application/json" id="app-config">{{APP_CONFIG}}</script>
+<script defer src="vendor/qrcodegen.js"></script>
+<script defer src="app.js"></script>
 </body>
 </html>
