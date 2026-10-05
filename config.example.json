@@ -1,61 +1,57 @@
 {
   "$comment": "Copy this to config.json, edit it, then run: ./brand-bot push-config",
-
   "name": "Your Name",
   "tagline": "Nice to meet you.",
   "domain": "you.example.com",
-
   "professional": {
     "label": "Professional",
-    "icon": "💼",
+    "icon": "\ud83d\udcbc",
     "blurb": "Work, code, hiring, speaking",
     "links": [
       {
-        "icon": "🐙",
+        "icon": "\ud83d\udc19",
         "label": "GitHub",
         "sub": "@yourhandle",
         "href": "https://github.com/yourhandle"
       },
       {
-        "icon": "🔗",
+        "icon": "\ud83d\udd17",
         "label": "LinkedIn",
         "sub": "in/yourhandle",
         "href": "https://www.linkedin.com/in/yourhandle"
       },
       {
-        "icon": "✉️",
+        "icon": "\u2709\ufe0f",
         "label": "Email",
         "sub": "you@example.com",
         "href": "mailto:you@example.com"
       }
     ]
   },
-
   "personal": {
     "label": "Personal",
-    "icon": "🌻",
+    "icon": "\ud83c\udf3b",
     "blurb": "Friends, makers, community",
     "links": [
       {
-        "icon": "💬",
+        "icon": "\ud83d\udcac",
         "label": "Signal",
         "sub": "Preferred for messaging",
         "href": "https://signal.me/#p/+10000000000"
       },
       {
-        "icon": "✉️",
+        "icon": "\u2709\ufe0f",
         "label": "Email",
         "sub": "you@example.com",
         "href": "mailto:you@example.com"
       }
     ]
   },
-
   "$backend": "Optional: add backend with url and publishableKey as described in supabase/README.md",
-
   "vcard": {
     "enabled": true,
     "label": "Save my contact card (.vcf)",
     "email": "you@example.com"
-  }
+  },
+  "showMeetingTools": true
 }

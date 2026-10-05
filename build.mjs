@@ -8,11 +8,14 @@
 
 import { readFileSync, writeFileSync, mkdirSync, copyFileSync, existsSync, rmSync } from "node:fs";
 import { createHash } from "node:crypto";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "node:util";
+import { categoriesFor, allCategories, allLinks } from "./categories.mjs";
 
 const root = dirname(fileURLToPath(import.meta.url));
-const OUT = join(root, "dist");
+const options = parseArgs({ options: { config: { type: "string" }, out: { type: "string" } } }).values;
+const OUT = resolve(root, options.out || "dist");
 
 const PLACEHOLDERS = ["Your Name", "you.example.com", "you@example.com", "yourhandle"];
 
@@ -29,6 +32,10 @@ function die(msg) {
 }
 
 function loadConfig() {
+  if (options.config) {
+    try { return { config: JSON.parse(readFileSync(resolve(root, options.config), "utf8")), source: options.config }; }
+    catch (e) { die("cannot read config " + options.config + ": " + e.message); }
+  }
   const env = process.env.BRAND_CONFIG;
   if (env && env.trim()) {
     try {
@@ -102,23 +109,48 @@ function safeHref(href) {
 }
 
 function renderLinks(links = []) {
-  return links
-    .map(
-      (l) => `        <li><a class="link" href="${esc(safeHref(l.href))}">
-          <span class="ico" aria-hidden="true">${esc(l.icon || "🔗")}</span>
-          <span class="txt"><span class="lbl">${esc(l.label)}</span><span class="sub">${esc(l.sub || "")}</span></span>
-        </a></li>`
-    )
-    .join("\n");
+  const anchor = l => `<a class="link" href="${esc(safeHref(l.href))}" target="_blank" rel="noopener noreferrer" data-contact-path="${esc(JSON.stringify(l.path))}" data-category-ids="${esc(JSON.stringify(l.categoryIds))}">
+    <span class="ico" aria-hidden="true">${esc(l.icon || '🔗')}</span>
+    <span class="txt"><span class="lbl">${esc(l.label)}</span><span class="sub">${esc(l.sub || '')}</span></span>
+  </a>`;
+  return links.map(l => {
+    if (!/^tel:/i.test(l.href)) return `<li>${anchor(l)}</li>`;
+    const number = l.href.replace(/^tel:/i, '');
+    const option = (label, href, icon) => anchor({ ...l, label, href, icon, path: [...l.path, label] });
+    return `<li><details class="phone-options"><summary class="link"><span class="ico" aria-hidden="true">${esc(l.icon || '📱')}</span><span class="txt"><span class="lbl">${esc(l.label)}</span><span class="sub">Call or text</span></span></summary>
+      <ul class="links"> <li>${option('Call', l.href, '📞')}</li><li>${option('Text', 'sms:' + number, '💬')}</li></ul>
+    </details></li>`;
+  }).join('\n');
+}
+
+function renderChoices(nodes) {
+  return nodes.map((c) => `<a class="choice" href="#/${c.ids.join("/")}" data-category-route="${c.ids.join("/")}">
+    <span class="ico" aria-hidden="true">${esc(c.icon)}</span>
+    <span class="txt"><span class="lbl">${esc(c.label)}</span><span class="sub">${esc(c.blurb)}</span></span>
+  </a>`).join("\n");
+}
+
+function renderCategories(nodes, config) {
+  const rootPanel = `<section id="panel-home" class="panel" aria-labelledby="prompt-home">
+    <p class="prompt" id="prompt-home">How do you know me?</p>
+    <div class="choices">${renderChoices(nodes)}</div>
+  </section>`;
+  return rootPanel + allCategories(nodes).map((c, i) => `<section id="panel-category-${i}" class="panel" data-category-panel="${c.ids.join("/")}" aria-labelledby="prompt-category-${i}">
+    <p class="prompt" id="prompt-category-${i}">${c.labels.map(esc).join(" &gt; ")}</p>
+    <div class="choices">${renderChoices(c.categories)}</div>
+    <ul class="links">${renderLinks(c.links)}</ul>
+    ${renderVcard(config)}
+
+  </section>`).join("\n");
 }
 
 const CREDIT_MODES = {
   default:
-    `<footer><p class="credit">Built with <a href="${AUTHOR.projectUrl}">${AUTHOR.projectName}</a> ` +
-    `by <a href="${AUTHOR.authorUrl}">${AUTHOR.author}</a>.</p></footer>`,
+    `<footer><p class="credit">Built with <a target="_blank" rel="noopener noreferrer" href="${AUTHOR.projectUrl}">${AUTHOR.projectName}</a> ` +
+    `by <a target="_blank" rel="noopener noreferrer" href="${AUTHOR.authorUrl}">${AUTHOR.author}</a>.</p></footer>`,
 
   github:
-    `<footer><p class="credit">Built with <a href="${AUTHOR.projectUrl}">${AUTHOR.projectName}</a>.</p></footer>`,
+    `<footer><p class="credit">Built with <a target="_blank" rel="noopener noreferrer" href="${AUTHOR.projectUrl}">${AUTHOR.projectName}</a>.</p></footer>`,
 
   none: "",
 };
@@ -197,7 +229,7 @@ function manifest(config) {
 
 function renderVcard(config) {
   if (config.vcard?.enabled === false) return "";
-  return `  <a class="vcard" href="contact.vcf" download>${esc(config.vcard?.label || "Save my contact card (.vcf)")}</a>`;
+  return `  <a class="vcard" href="contact.vcf" target="_blank" rel="noopener noreferrer" download>${esc(config.vcard?.label || "Save my contact card (.vcf)")}</a>`;
 }
 
 // vCard 3.0. Values are escaped per RFC 2426: backslash, comma, semicolon
@@ -239,7 +271,7 @@ const SOCIAL = [
   [/youtube\.com/i, "youtube"],
 ];
 
-function buildVcf(config) {
+function buildVcf(config, categories) {
   const parts = String(config.name).trim().split(/\s+/);
   const first = parts[0] || "";
   const last = parts.length > 1 ? parts[parts.length - 1] : "";
@@ -263,7 +295,7 @@ function buildVcf(config) {
 
   // Every link from both sides, so a saved contact carries the whole card.
   const seen = new Set([`https://${config.domain}/`]);
-  for (const l of [...(config.professional?.links || []), ...(config.personal?.links || [])]) {
+  for (const l of allLinks(categories)) {
     const href = String(l.href || "");
     if (!href || seen.has(href)) continue;
     seen.add(href);
@@ -294,26 +326,23 @@ validate(config, source);
 
 const template = readFileSync(join(root, "template.html"), "utf8");
 
-const pro = config.professional || {};
-const per = config.personal || {};
+let categories;
+try { categories = categoriesFor(config); } catch (e) { die(e.message); }
 const browserConfig = JSON.stringify({
+  showMeetingTools: config.showMeetingTools !== false,
   backend: config.backend ? { url: config.backend.url.replace(/\/$/, ""), publishableKey: config.backend.publishableKey } : null,
   version: createHash("sha256").update(template).update(readFileSync(join(root, "app.js"))).update(readFileSync(join(root, "app.css"))).digest("hex").slice(0, 12),
 }).replace(/</g, "\\u003c").replace(/>/g, "\\u003e").replace(/&/g, "\\u0026");
 
+const csp = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'" +
+  (config.backend ? ' ' + config.backend.url.replace(/\/$/, '') : '') +
+  "; object-src 'none'; base-uri 'none'; form-action 'self'; worker-src 'self'; manifest-src 'self'";
 const html = template
+  .replaceAll("{{CSP}}", esc(csp))
   .replaceAll("{{NAME}}", esc(config.name))
   .replaceAll("{{TAGLINE}}", esc(config.tagline || ""))
   .replaceAll("{{DOMAIN}}", esc(config.domain))
-  .replaceAll("{{PRO_LABEL}}", esc(pro.label || "Professional"))
-  .replaceAll("{{PRO_ICON}}", esc(pro.icon || "💼"))
-  .replaceAll("{{PRO_BLURB}}", esc(pro.blurb || ""))
-  .replaceAll("{{PRO_LINKS}}", renderLinks(pro.links))
-  .replaceAll("{{PER_LABEL}}", esc(per.label || "Personal"))
-  .replaceAll("{{PER_ICON}}", esc(per.icon || "🌻"))
-  .replaceAll("{{PER_BLURB}}", esc(per.blurb || ""))
-  .replaceAll("{{PER_LINKS}}", renderLinks(per.links))
-  .replaceAll("{{VCARD}}", renderVcard(config))
+  .replaceAll("{{CATEGORY_PANELS}}", renderCategories(categories, config))
   .replaceAll("{{CREDIT}}", renderCredit(config))
   .replaceAll("{{QR_SVG}}", qrSvg(config))
   .replaceAll("{{APP_CONFIG}}", browserConfig);
@@ -327,7 +356,7 @@ writeFileSync(join(OUT, "CNAME"), config.domain + "\n");
 writeFileSync(join(OUT, "manifest.webmanifest"), manifest(config));
 writeFileSync(join(OUT, "icon-192.svg"), icon(config, 192));
 writeFileSync(join(OUT, "icon-512.svg"), icon(config, 512));
-const vcf = config.vcard?.enabled !== false ? buildVcf(config) : null;
+const vcf = config.vcard?.enabled !== false ? buildVcf(config, categories) : null;
 if (vcf !== null) writeFileSync(join(OUT, "contact.vcf"), vcf);
 else rmSync(join(OUT, "contact.vcf"), { force: true });
 
@@ -348,7 +377,7 @@ for (const f of ["qr.svg", ...appFiles]) {
   if (existsSync(join(root, f))) copyFileSync(join(root, f), join(OUT, f));
 }
 
-console.log(`built dist/ from ${source}`);
+console.log(`built ${OUT}/ from ${source}`);
 console.log(`  name:   ${config.name}`);
 console.log(`  domain: ${config.domain}`);
 console.log(`  credit: ${config.credit ?? "default"}`);

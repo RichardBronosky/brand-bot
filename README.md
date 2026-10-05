@@ -204,6 +204,25 @@ node tests/browser.mjs               # Node 22+, Chromium, zbarimg
 bash tests/database.sh              # PostgreSQL binaries in PATH
 ```
 
+Try the meeting tools without a Supabase project with `node demo.mjs`. Open
+`http://127.0.0.1:8766/#/owner` and sign in as `demo@example.org` / `demo`.
+Use a separate browser or private window to open the conversation invitation.
+The clearly labeled demo uses an in-memory mock database; restarting it discards
+its data. It binds to this computer's loopback interface and is not deployed.
+
+For phone testing, proxy the running demo through Tailscale Serve:
+
+```sh
+tailscale serve status
+tailscale serve --bg --https=443 http://127.0.0.1:8766
+```
+
+Use a free HTTPS port if another Serve route already occupies 443. Follow the
+CLI's account setup link if HTTPS/Serve is not enabled yet. Open the displayed
+`https://…ts.net/#/owner` address on both devices, with Tailscale connected to the
+same tailnet. Generate the QR from that address so it contains the reachable
+hostname. The demo uses same-origin API requests behind the HTTPS proxy.
+
 The browser checks use mocked Supabase HTTP responses and a real browser. The
 SQL checks use a disposable real PostgreSQL database with test Auth roles. A live
 Supabase project is still needed to check its hosted API and Auth configuration.

@@ -8,9 +8,12 @@
   const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const installed = navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
   const originalQR = $('qr-code').innerHTML;
-  const panels = ['home', 'professional', 'personal', 'qr', 'owner'];
+  const originalDomain = document.querySelector('.qr-domain').textContent;
+  const categories = new Map([...document.querySelectorAll('[data-category-panel]')].map(p => [p.dataset.categoryPanel, p]));
   const errors = [];
+  const locationStates = new Map();
   let auth = read('auth', null), owner = false, connection = null;
+  let authEpoch = 0;
   let refreshing = null, flushing = false, creating = false;
   let messagesToken = null, cursor = 0, polling = false;
   const seenMessages = new Set();
@@ -32,38 +35,56 @@
   window.addEventListener('unhandledrejection', (e) => issue(e.reason || 'Unhandled rejection'));
   function status(text) { $('owner-status').textContent = text; }
   function route() {
-    const parts = location.hash.replace(/^#\/?/, '').split('/');
-    if (parts[0] === 'meet') {
-      return { token: UUID.test(parts[1] || '') ? parts[1] : null,
-        invalid: !UUID.test(parts[1] || ''), panel: ['professional', 'personal'].includes(parts[2]) ? parts[2] : 'home' };
-    }
-    return { token: null, invalid: false, panel: panels.includes(parts[0]) ? parts[0] : 'home' };
+    const parts = location.hash.replace(/^#\/?/, '').split('/').filter(Boolean);
+    const invited = parts[0] === 'meet';
+    const path = (invited ? parts.slice(2) : parts).join('/');
+    return { token: invited && UUID.test(parts[1] || '') ? parts[1] : null,
+      invalid: invited && !UUID.test(parts[1] || ''),
+      panel: categories.has(path) ? 'category' : !invited && ['qr', 'owner'].includes(path) ? path : 'home',
+      path: categories.has(path) ? path : '' };
   }
-  function routeHref(panel) {
+  function routeHref(path) {
     const r = route();
-    return r.token ? '#/meet/' + r.token + (panel === 'home' ? '' : '/' + panel) : '#/' + (panel === 'home' ? '' : panel);
+    if (path === 'home') path = '';
+    return r.token ? '#/meet/' + r.token + (path ? '/' + path : '') : '#/' + path;
   }
   function show() {
     const r = route();
-    panels.forEach((p) => $('panel-' + p).classList.toggle('is-active', p === r.panel));
+    const active = r.panel === 'category' ? categories.get(r.path) : $('panel-' + r.panel);
+    document.querySelectorAll('.panel').forEach(p => p.classList.toggle('is-active', p === active));
     document.body.classList.toggle('owner-view', r.panel === 'owner');
-    document.querySelectorAll('.choice').forEach((a, i) => { a.href = routeHref(i === 0 ? 'professional' : 'personal'); });
+    $('floating-back').hidden = r.panel === 'home';
+    $('floating-back').href = routeHref(r.path.split('/').slice(0, -1).join('/'));
+    document.querySelectorAll('[data-category-route]').forEach(a => { a.href = routeHref(a.dataset.categoryRoute); });
     $('shared-messages').hidden = !backend || (!r.token && !r.invalid) || r.panel === 'qr' || r.panel === 'owner';
+    $('invitee-message-form').hidden = !backend || !r.token;
+    $('invitee-message-body').value = r.token ? read('message-draft:' + r.token, '') : '';
+    $('shared-status').hidden = !r.invalid;
     if (r.invalid) $('shared-status').textContent = 'This invitation link is invalid. You can still use my contact card.';
-    $('owner-entry').hidden = !backend || r.panel === 'qr' || r.panel === 'owner';
-    $('qr-owner-tools').hidden = !owner;
+    $('qr-owner-tools').hidden = !backend || config.showMeetingTools === false;
     $('bug-toggle').hidden = !owner;
     // Keep bug capture in the QR action stack so it cannot cover wallpaper hints.
     if (r.panel === 'qr') document.querySelector('.qr-actions').append($('bug-toggle'));
     else document.body.insertBefore($('bug-toggle'), $('bug-dialog'));
     if (r.token !== messagesToken) {
+      $('shared-heading').textContent = 'Conversation with Bruno';
       messagesToken = r.token; cursor = 0; seenMessages.clear(); $('shared-list').replaceChildren();
-      if (r.token) $('shared-status').textContent = 'Checking for shared messages…';
+      if (!r.invalid) { $('shared-status').hidden = true; $('shared-status').textContent = ''; }
+      $('invitee-conversation').open = false;
     }
     if (backend && owner && r.panel === 'owner') refreshOwner().catch(ownerError);
   }
   window.addEventListener('hashchange', show);
-  document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => { location.hash = routeHref('home'); }));
+  document.querySelectorAll('[data-back]').forEach((b) => b.addEventListener('click', () => { location.hash = routeHref(route().path.split('/').slice(0, -1).join('/')); }));
+  let ownerTaps = [];
+  window.addEventListener('hashchange', () => { ownerTaps = []; });
+  document.querySelector('.qr-domain').addEventListener('click', () => {
+    if (!backend || route().panel !== 'qr') return;
+    const now = performance.now();
+    ownerTaps = ownerTaps.filter(at => now - at < 3000);
+    ownerTaps.push(now);
+    if (ownerTaps.length >= 5) { ownerTaps = []; location.hash = '#/owner'; }
+  });
   const osHint = document.querySelector('[data-os-hint]');
   osHint.textContent = /iPhone|iPad|iPod/.test(navigator.userAgent) ? 'Photos → Share → Use as Wallpaper → Set Lock Screen.' :
     /Android/.test(navigator.userAgent) ? 'Photos → ⋮ → Use as → Lock screen.' : 'Then set it as your lock screen wallpaper.';
@@ -86,12 +107,17 @@
   async function accessToken() {
     if (!auth) throw new Error('Sign in to your meeting tools.');
     if (auth.expires_at > Date.now() / 1000 + 60) return auth.access_token;
-    if (!refreshing) refreshing = request('/auth/v1/token?grant_type=refresh_token', { refresh_token: auth.refresh_token })
-      .then(saveAuth).catch((err) => {
-        if (err.status === 400 || err.status === 401) { auth = null; owner = false; remove('auth'); updateOwnerUI(); }
-        throw err;
-      }).finally(() => { refreshing = null; });
+    if (!refreshing) {
+      const session = auth;
+      refreshing = request('/auth/v1/token?grant_type=refresh_token', { refresh_token: session.refresh_token })
+        .then(data => { if (auth !== session) throw new Error('Session changed.'); saveAuth(data); })
+        .catch(err => {
+          if (auth === session && (err.status === 400 || err.status === 401)) { authEpoch++; auth = null; owner = false; remove('auth'); updateOwnerUI(); }
+          throw err;
+        }).finally(() => { refreshing = null; });
+    }
     await refreshing;
+    if (!auth) throw new Error('Sign in to your meeting tools.');
     return auth.access_token;
   }
   function saveAuth(data) {
@@ -110,11 +136,13 @@
     } else status('Could not sync: ' + err.message + '. Your draft notes stay on this device.');
   }
   function updateOwnerUI() {
+    $('qr-nav').href = owner ? '#/owner' : '#/qr';
+    $('qr-nav').setAttribute('aria-label', owner ? 'Select a conversation QR in Meeting tools' : 'Show QR code');
     $('owner-login').hidden = owner || !backend;
     $('owner-tools').hidden = !owner;
-    $('qr-owner-tools').hidden = !owner;
+    $('qr-owner-tools').hidden = !backend || config.showMeetingTools === false;
     $('bug-toggle').hidden = !owner;
-    if (!owner) { connection = null; $('qr-code').innerHTML = originalQR; $('qr-status').textContent = ''; }
+    if (!owner) { $('qr-session-meta').hidden = true; connection = null; $('qr-code').innerHTML = originalQR; $('qr-status').textContent = ''; document.querySelector('.qr-domain').textContent = originalDomain; }
   }
 
   // Writes persist locally until acknowledged. There is no public read/poll.
@@ -149,7 +177,8 @@
     const a = e.target.closest('a');
     if (!a) return;
     if (a.classList.contains('link')) record('contact_click', {
-      label: a.querySelector('.lbl')?.textContent || '', href: a.getAttribute('href')
+      label: a.querySelector('.lbl')?.textContent || '', href: a.getAttribute('href'),
+      path: JSON.parse(a.dataset.contactPath || '[]'), category_ids: JSON.parse(a.dataset.categoryIds || '[]')
     });
     if (a.classList.contains('vcard')) record('vcard_download');
   });
@@ -164,7 +193,9 @@
   }
   function messageNode(m, guest = false) {
     const li = document.createElement('li'); const p = document.createElement('p');
-    p.textContent = m.body; li.append(timeNode(m.created_at), p);
+    const sender = document.createElement('strong');
+    sender.textContent = m.sender === 'invitee' ? (guest ? 'You' : 'Invitee') : (guest ? document.querySelector('header .name').textContent : 'You');
+    p.textContent = m.body; li.append(sender, timeNode(m.created_at), p);
     const url = httpURL(m.url);
     if (url) {
       const a = document.createElement('a'); a.href = url; a.textContent = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
@@ -176,20 +207,51 @@
   async function refreshMessages() {
     const token = route().token;
     if (!token) return;
-    const data = await rpc('get_messages', { p_token: token, p_after: cursor });
+    const [data, label] = await Promise.all([rpc('get_messages', { p_token: token, p_after: cursor }), rpc('get_conversation_label', { p_token: token })]);
     if (route().token !== token) return;
+    $('shared-heading').textContent = 'Conversation with ' + (label?.trim() || 'Bruno');
     for (const m of data) {
       if (!seenMessages.has(m.id)) {
         $('shared-list').append(messageNode(m, true)); seenMessages.add(m.id);
-        record('message_received', { message_id: m.id }, token);
+        if (m.sender !== 'invitee') record('message_received', { message_id: m.id }, token);
       }
       cursor = Math.max(cursor, Number(m.id));
     }
-    $('shared-status').textContent = seenMessages.size ? 'These messages stay available when you reopen this link.' : 'Links shared during our conversation will appear here.';
+    $('shared-status').hidden = true;
+    $('shared-status').textContent = '';
   }
+  $('invitee-message-body').addEventListener('input', () => {
+    if (route().token) write('message-draft:' + route().token, $('invitee-message-body').value);
+  });
+  let inviteeSending = false;
+  $('invitee-message-form').addEventListener('submit', async e => {
+    e.preventDefault();
+    const token = route().token, body = $('invitee-message-body').value.trim();
+    if (!token || !body || inviteeSending) return;
+    const key = 'message-pending:' + token;
+    let pending = read(key, null);
+    if (!pending || pending.body !== body) pending = { body, id: crypto.randomUUID() };
+    write(key, pending);
+    const button = e.target.querySelector('button'); button.disabled = true; inviteeSending = true;
+    $('invitee-message-status').textContent = 'Sending…';
+    try {
+      await rpc('send_invitee_message', { p_token: token, p_body: body, p_request_id: pending.id });
+      remove(key); remove('message-draft:' + token);
+      if (route().token === token) {
+        if ($('invitee-message-body').value.trim() === body) $('invitee-message-body').value = '';
+        else write('message-draft:' + token, $('invitee-message-body').value);
+        $('invitee-message-status').textContent = 'Message sent';
+        await refreshMessages();
+      }
+    } catch (error) {
+      issue(error);
+      if (route().token === token) $('invitee-message-status').textContent = 'Could not confirm sending. Your text is saved; try again. ' + error.message;
+    } finally { button.disabled = false; inviteeSending = false; }
+  });
   function eventNode(e) {
     const li = document.createElement('li');
-    const labels = { page_open: 'Page opened', contact_click: 'Tapped ' + (e.details.label || 'contact link'),
+    const coordinates = p => p?.latitude != null && p?.longitude != null ? p.latitude + ', ' + p.longitude : 'not recorded';
+    const labels = { location_update: 'Location updated · from ' + coordinates(e.details.from) + ' → to ' + coordinates(e.details.to), page_open: 'Page opened', contact_click: 'Tapped ' + (Array.isArray(e.details.path) && e.details.path.length ? e.details.path.join(' > ') : e.details.label || 'contact link'),
       vcard_download: 'Tapped contact download', message_received: 'Message #' + e.details.message_id + ' received by page',
       message_click: 'Tapped link in message #' + e.details.message_id };
     const text = document.createElement('div'); text.textContent = labels[e.kind] || e.kind;
@@ -198,6 +260,29 @@
   function renderEvents(id, data) {
     const ul = $(id); ul.replaceChildren(...data.slice().reverse().map(eventNode));
     if (!data.length) { const li = document.createElement('li'); li.textContent = 'No activity yet.'; ul.append(li); }
+  }
+  function renderPublicEvents(data) {
+    const list = $('public-events');
+    const expanded = new Set([...list.querySelectorAll('details[open]')].map(d => d.dataset.visitor));
+    const groups = new Map();
+    const newest = data.slice().sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+    for (const event of newest) {
+      const id = event.visitor_id || 'unknown';
+      if (!groups.has(id)) groups.set(id, []);
+      groups.get(id).push(event);
+    }
+    list.replaceChildren(...[...groups].map(([id, events]) => {
+      const li = document.createElement('li'), details = document.createElement('details');
+      details.dataset.visitor = id; details.open = expanded.has(id);
+      const summary = document.createElement('summary');
+      summary.textContent = (id === 'unknown' ? 'Unknown visitor' : 'Visitor ' + id.slice(0, 8)) +
+        ' · ' + events.length + ' event' + (events.length === 1 ? '' : 's') + ' · latest ';
+      summary.append(timeNode(events[0].created_at));
+      const actions = document.createElement('ul'); actions.className = 'event-list';
+      actions.replaceChildren(...events.map(eventNode));
+      details.append(summary, actions); li.append(details); return li;
+    }));
+    if (!groups.size) { const li = document.createElement('li'); li.textContent = 'No activity yet.'; list.append(li); }
   }
   async function refreshOwner() {
     const rows = await rpc('list_connections', {}, true);
@@ -214,9 +299,13 @@
     const id = connection.id;
     const data = await rpc('get_connection', { p_id: id }, true);
     if (!owner || connection?.id !== id) return;
+    Object.assign(connection, { latitude: data.connection.latitude, longitude: data.connection.longitude, label: data.connection.label });
+    renderQRMetadata();
+    renderSessionInfo();
     renderEvents('session-events', data.events);
-    $('owner-messages').replaceChildren(...data.messages.map((m) => {
+    $('owner-messages').replaceChildren(...data.messages.slice().sort((a, b) => Number(b.id) - Number(a.id)).map((m) => {
       const node = messageNode(m);
+      if (m.sender === 'invitee') return node;
       const received = data.events.filter((e) => e.kind === 'message_received' && Number(e.details.message_id) === Number(m.id)).length;
       const p = document.createElement('p'); p.className = 'activity-help'; p.textContent = received ? 'Received by page' : 'Saved · awaiting page receipt';
       node.append(p); return node;
@@ -229,17 +318,19 @@
     connection = c;
     const draft = read(draftKey(c.id), null);
     $('session-editor').hidden = false; $('show-session-qr').hidden = false;
+    $('session-link').value = location.origin + location.pathname + '#/meet/' + c.invite_token;
     $('session-label').value = draft?.label ?? c.label;
     $('session-notes').value = draft?.notes ?? c.notes;
     $('notes-status').textContent = draft ? 'Unsaved draft on this device' : '';
-    $('session-info').textContent = 'Started ' + new Date(c.created_at).toLocaleString() +
-      (c.latitude !== null ? ' · ' + c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5) : ' · location not recorded');
+    renderSessionInfo();
+    $('session-editor').open = true;
+    $('current-conversation-heading').textContent = 'Conversation: ' + (c.label.trim() || 'Unnamed');
     renderQR(c.invite_token);
   }
   async function selectConnection(id) {
     const data = await rpc('get_connection', { p_id: id }, true);
     if (!owner) return;
-    setConnection(data.connection); await refreshConnection(); status('Conversation selected.');
+    setConnection(data.connection); await refreshConnection(); status('Conversation: ' + (connection.label.trim() || 'Unnamed'));
   }
   function renderQR(token) {
     const url = location.origin + location.pathname + '#/meet/' + token;
@@ -252,8 +343,71 @@
     const path = document.createElementNS(svg.namespaceURI, 'path'); let d = '';
     for (let y = 0; y < qr.size; y++) for (let x = 0; x < qr.size; x++) if (qr.getModule(x, y)) d += `M${x + border},${y + border}h1v1h-1z`;
     path.setAttribute('d', d); path.setAttribute('fill', '#000'); svg.append(bg, path); $('qr-code').replaceChildren(svg);
+    document.querySelector('.qr-domain').textContent = originalDomain;
+    renderQRMetadata();
     $('qr-status').textContent = 'Conversation QR ready · waiting for a page open';
   }
+  function renderQRMetadata() {
+    $('qr-session-meta').hidden = !connection;
+    if (!connection) return;
+    const label = connection.label.trim();
+    $('qr-session-label').hidden = !label;
+    $('qr-session-label').textContent = label;
+    $('qr-session-created').dateTime = connection.created_at;
+    $('qr-session-created').textContent = 'Created ' + new Date(connection.created_at).toLocaleString();
+    renderQRAge();
+  }
+  function renderQRAge() {
+    if (!connection) return;
+    const minutes = Math.max(0, Math.floor((Date.now() - new Date(connection.created_at).getTime()) / 60000));
+    const count = minutes >= 1440 ? Math.floor(minutes / 1440) : minutes >= 60 ? Math.floor(minutes / 60) : minutes;
+    const unit = minutes >= 1440 ? 'day' : minutes >= 60 ? 'hour' : 'minute';
+    $('qr-session-age').textContent = '(' + count + ' ' + unit + (count === 1 ? '' : 's') + ' ago)';
+  }
+  setInterval(renderQRAge, 30000);
+  function renderSessionInfo() {
+    if (!connection) return;
+    const c = connection;
+    const locating = locationStates.get(c.id);
+    const info = $('session-info');
+    info.replaceChildren(document.createTextNode('Started ' + new Date(c.created_at).toLocaleString()));
+    if (c.latitude != null && c.longitude != null) {
+      const coords = c.latitude + ',' + c.longitude;
+      const link = document.createElement('a');
+      link.href = /Android/i.test(navigator.userAgent) ? 'geo:' + coords + '?q=' + encodeURIComponent(coords) :
+        /iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1) ?
+        'https://maps.apple.com/?ll=' + coords + '&q=' + encodeURIComponent(coords) :
+        'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(coords);
+      link.textContent = c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5);
+      link.target = '_blank'; link.rel = 'noopener noreferrer'; link.setAttribute('aria-label', 'Open recorded location in maps');
+      info.append(' · ', link);
+    }
+    if (locating) info.append(locating);
+    else if (c.latitude == null || c.longitude == null) info.append(' · location not recorded');
+    $('retry-location').disabled = locating === ' · Recording location…';
+    $('retry-location').textContent = c.latitude != null ? 'Update location' : 'Record location';
+  }
+  async function captureLocation(c) {
+    if (locationStates.get(c.id) === ' · Recording location…') return;
+    locationStates.set(c.id, ' · Recording location…');
+    if (connection?.id === c.id) renderSessionInfo();
+    try {
+      if (!navigator.geolocation) throw new Error('Location is unavailable in this browser');
+      const position = await new Promise((resolve, reject) => navigator.geolocation.getCurrentPosition(resolve, reject,
+        { timeout: 30000, maximumAge: 0, enableHighAccuracy: true }));
+      await rpc('set_location', { p_id: c.id, p_latitude: position.coords.latitude, p_longitude: position.coords.longitude, p_accuracy: position.coords.accuracy }, true);
+      locationStates.delete(c.id);
+      if (connection?.id === c.id) {
+        connection.latitude = position.coords.latitude; connection.longitude = position.coords.longitude;
+      }
+    } catch (err) {
+      issue(err);
+      const reason = err.code === 1 ? 'permission denied' : err.code === 2 ? 'device could not determine location' : err.code === 3 ? 'location request timed out' : err.message;
+      locationStates.set(c.id, ' · Location not recorded: ' + reason + '. Use Record location to retry.');
+    }
+    if (connection?.id === c.id) renderSessionInfo();
+  }
+  $('retry-location').addEventListener('click', () => { if (connection && owner) captureLocation(connection); });
   async function newConnection() {
     if (creating) return;
     creating = true; $('new-session').disabled = true;
@@ -262,16 +416,7 @@
       const c = await rpc('create_connection', {}, true);
       if (!owner) return;
       setConnection(c); location.hash = '#/qr'; status('Conversation created.');
-      // Location is private metadata. A slow/denied fix never delays the QR.
-      if (navigator.geolocation) navigator.geolocation.getCurrentPosition(async (position) => {
-        try {
-          await rpc('set_location', { p_id: c.id, p_latitude: position.coords.latitude, p_longitude: position.coords.longitude, p_accuracy: position.coords.accuracy }, true);
-          if (connection?.id === c.id) {
-            c.latitude = position.coords.latitude; c.longitude = position.coords.longitude;
-            $('session-info').textContent = 'Started ' + new Date(c.created_at).toLocaleString() + ' · ' + c.latitude.toFixed(5) + ', ' + c.longitude.toFixed(5);
-          }
-        } catch (err) { issue(err); }
-      }, () => {}, { timeout: 8000, maximumAge: 0, enableHighAccuracy: false });
+      captureLocation(c);
       await refreshOwner();
     } catch (err) {
       ownerError(err);
@@ -280,6 +425,10 @@
   }
   $('new-session').addEventListener('click', () => newConnection());
   $('show-session-qr').addEventListener('click', () => { location.hash = '#/qr'; });
+  $('copy-session-link').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('session-link').value); status('Invitation link copied.'); }
+    catch { $('session-link').focus(); $('session-link').select(); status('Select and copy the invitation link.'); }
+  });
   for (const id of ['session-label', 'session-notes']) $(id).addEventListener('input', () => {
     if (!connection || !auth) return;
     const saved = write(draftKey(connection.id), { label: $('session-label').value, notes: $('session-notes').value });
@@ -295,6 +444,9 @@
       if (!draft || (draft.label === label && draft.notes === notes)) remove(key);
       if (connection?.id === id) {
         connection.label = label; connection.notes = notes;
+        renderQRMetadata();
+        $('current-conversation-heading').textContent = 'Conversation: ' + (label.trim() || 'Unnamed');
+        status('Conversation: ' + (label.trim() || 'Unnamed'));
         $('notes-status').textContent = read(key, null) ? 'Newer changes still unsaved' : 'Saved';
       }
       await refreshOwner();
@@ -315,14 +467,18 @@
     e.preventDefault(); const button = e.submitter || e.target.querySelector('button[type="submit"]'); button.disabled = true; status('Signing in…');
     try {
       const form = new FormData(e.target);
-      saveAuth(await request('/auth/v1/token?grant_type=password', { email: form.get('email'), password: form.get('password') }));
+      const epoch = ++authEpoch;
+      const result = await request('/auth/v1/token?grant_type=password', { email: form.get('email'), password: form.get('password') });
+      if (epoch !== authEpoch) return;
+      saveAuth(result);
       $('owner-login').reset(); await rpc('list_connections', {}, true);
+      if (epoch !== authEpoch || !auth) return;
       owner = true; updateOwnerUI(); status('Signed in. Start a conversation to show its QR.'); await refreshOwner(); await flush();
     } catch (err) { ownerError(err); } finally { button.disabled = false; }
   });
   $('owner-logout').addEventListener('click', async () => {
     const token = auth?.access_token;
-    auth = null; owner = false; remove('auth'); updateOwnerUI();
+    authEpoch++; auth = null; owner = false; remove('auth'); updateOwnerUI();
     $('session-events').replaceChildren(); $('owner-messages').replaceChildren(); $('session-list').replaceChildren();
     $('session-label').value = ''; $('session-notes').value = '';
     $('public-events').replaceChildren(); $('bug-list').replaceChildren(); status('Signed out.');
@@ -330,7 +486,7 @@
   });
   $('public-activity').addEventListener('toggle', async () => {
     if (!$('public-activity').open || !owner) return;
-    try { const data = await rpc('get_public_events', {}, true); if (owner) renderEvents('public-events', data.slice().reverse()); }
+    try { const data = await rpc('get_public_events', {}, true); if (owner) renderPublicEvents(data); }
     catch (err) { ownerError(err); }
   });
   $('bug-history').addEventListener('toggle', async () => {
@@ -366,7 +522,7 @@
       else if (r.token) await refreshMessages();
     } catch (err) {
       issue(err);
-      if (route().token) $('shared-status').textContent = 'Shared messages are unavailable right now. Your contact links still work.';
+      if (route().token) { $('shared-status').hidden = false; $('shared-status').textContent = 'Shared messages are unavailable right now. Your contact links still work.'; }
       else if (owner) status('Updates unavailable right now. Your draft notes stay on this device.');
     } finally { polling = false; }
   }
@@ -377,7 +533,7 @@
     show(); updateOwnerUI();
     if (backend) {
       if (auth) {
-        try { await rpc('list_connections', {}, true); owner = true; updateOwnerUI(); }
+        try { const epoch = authEpoch; await rpc('list_connections', {}, true); if (epoch === authEpoch && auth) { owner = true; updateOwnerUI(); } }
         catch (err) { ownerError(err); }
       }
       if (owner) {

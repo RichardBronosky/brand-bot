@@ -13,6 +13,7 @@ brand-bot — a QR-to-contact-card you host yourself
 
   build              Render config.json -> dist/
   serve [port]       Build, then serve dist/ locally (default 8765)
+  preview [port]     Build config.preview.json and serve preview-dist/ (8767)
   qr                 Regenerate qr.svg from your config's domain
   push-config        Upload config.json to the GitHub repo variable
   pull-config        Download the repo variable into config.json
@@ -47,6 +48,13 @@ repo_slug() {
 cmd_build() {
   need node
   node build.mjs
+}
+
+cmd_preview() {
+  need node
+  need python3
+  node build.mjs --config config.preview.json --out preview-dist
+  python3 -m http.server "${1:-8767}" --bind 127.0.0.1 --directory preview-dist
 }
 
 cmd_serve() {
@@ -154,6 +162,7 @@ cmd_status() {
 case "${1:-}" in
   build)         shift; cmd_build "$@" ;;
   serve)         shift; cmd_serve "$@" ;;
+  preview)       shift; cmd_preview "$@" ;;
   qr)            shift; cmd_qr "$@" ;;
   push-config)   shift; cmd_push_config "$@" ;;
   pull-config)   shift; cmd_pull_config "$@" ;;

@@ -2,9 +2,9 @@
 #panel-owner h2, #shared-heading { font-size: 1.2rem; }
 #panel-owner h3 { font-size: 1rem; margin: 1.5rem 0 .5rem; }
 #panel-owner form, #shared-messages { margin: 1rem 0; padding: 1rem; border: 1px solid var(--line); border-radius: var(--radius); background: var(--card); }
-#panel-owner label, #bug-dialog label { display: block; margin: .6rem 0; font-size: .9rem; }
-#panel-owner input, #panel-owner textarea, #bug-dialog textarea { display: block; width: 100%; margin-top: .3rem; padding: .7rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
-#panel-owner button, #bug-dialog button, #bug-toggle { padding: .65rem .85rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; font: inherit; cursor: pointer; }
+#panel-owner label, #bug-dialog label, #invitee-message-form label { display: block; margin: .6rem 0; font-size: .9rem; }
+#panel-owner input, #panel-owner textarea, #bug-dialog textarea, #invitee-message-body { display: block; width: 100%; margin-top: .3rem; padding: .7rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 8px; font: inherit; }
+#panel-owner button, #bug-dialog button, #bug-toggle, #invitee-message-form button { padding: .65rem .85rem; color: var(--fg); background: var(--card); border: 1px solid var(--line); border-radius: 8px; font: inherit; cursor: pointer; }
 #panel-owner button:focus-visible, #bug-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 #panel-owner button:disabled { opacity: .55; cursor: wait; }
 .tool-row { display: flex; flex-wrap: wrap; gap: .5rem; }
@@ -27,3 +27,20 @@ body.owner-view main { margin: 0; }
   .qr-code { width: min(58vw, 40vh); }
   .qr-hint { display: none; }
 }
+
+.message-list strong { display: block; font-size: .85rem; }
+
+#public-events details { margin: .3rem 0; }
+#public-events summary { overflow-wrap: anywhere; }
+#public-events .event-list { padding-left: .75rem; }
+#panel-owner summary { cursor: pointer; }
+
+#invitee-conversation summary { cursor: pointer; font-weight: 600; }
+#shared-messages { padding: .65rem 1rem; }
+
+#session-info a { color: var(--accent); text-underline-offset: 3px; }
+
+#qr-session-meta { text-align: center; font-size: .8rem; color: var(--muted); }
+#qr-session-label { margin: 0 0 .25rem; color: var(--fg); font-weight: 600; overflow-wrap: anywhere; }
+
+#qr-session-age { margin: .25rem 0 0; }

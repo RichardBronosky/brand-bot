@@ -1,6 +1,7 @@
 // Real Chromium UI regression test; Supabase HTTP responses are mocked.
 // Requires Node 22+, chromium and zbarimg. No npm dependencies.
 import assert from 'node:assert/strict';
+import { createMockBackend } from './mock-backend.mjs';
 import { spawn, execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { mkdtempSync, mkdirSync, copyFileSync, readFileSync, writeFileSync } from 'node:fs';
@@ -9,9 +10,12 @@ import { fileURLToPath } from 'node:url';
 const source = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = mkdtempSync('/tmp/brand-browser-test-');
 mkdirSync(join(root, 'vendor'));
-for (const f of ['build.mjs','template.html','sw.js','app.js','app.css','vendor/qrcodegen.js','qr.svg']) copyFileSync(join(source,f),join(root,f));
+for (const f of ['categories.mjs', 'build.mjs','template.html','sw.js','app.js','app.css','vendor/qrcodegen.js','qr.svg']) copyFileSync(join(source,f),join(root,f));
 execFileSync(process.execPath,[join(root,'build.mjs')],{env:{...process.env,BRAND_CONFIG:JSON.stringify({
- name:'Meeting Test',domain:'test.example.org',professional:{links:[{label:'Email',href:'mailto:test@example.org'}]},personal:{links:[]},
+ name:'Meeting Test',domain:'test.example.org',showMeetingTools:false,professional:{links:[{label:'Email',href:'mailto:test@example.org'}]},personal:{links:[]},
+ categories:[{id:'professional',label:'Professional',links:[{label:'Email',href:'mailto:test@example.org'}]},
+ {id:'personal',label:'Personal',categories:[{id:'friends',label:'Friends',categories:[{id:'close',label:'Close',links:[{label:'Phone',href:'tel:+15555550123'}]}]}]},
+ {id:'community',label:'Community',links:[]}],
  backend:{url:'https://test.supabase.co',publishableKey:'sb_publishable_test'}
 })}});
 const server = createServer((req,res)=>{
@@ -35,34 +39,10 @@ class CDP {
  close(){this.ws.close();}
 }
 const browser=new CDP(endpoint), clients=[];
-const calls=[],events=[],messages=[],bugs=[],connections=[];
-let failedEvent=false;
-const now=()=>new Date().toISOString();
-function api(name,p,authorized){
- if(name.startsWith('/auth/v1/token')) return {access_token:'owner-access',refresh_token:'owner-refresh',expires_in:3600,user:{id:'11111111-1111-4111-8111-111111111111'}};
- if(name.startsWith('/auth/v1/logout')) return null;
- const fn=name.split('brand_')[1];
- if(!['record_event','get_messages'].includes(fn)&&!authorized)throw Object.assign(new Error('Owner required'),{status:403});
- switch(fn){
- case 'list_connections':return connections.slice().reverse().map(c=>({...c,opens:events.filter(e=>e.connection_id===c.id&&e.kind==='page_open').length}));
- case 'create_connection': {const c={id:crypto.randomUUID(),invite_token:crypto.randomUUID(),created_at:now(),latitude:null,longitude:null,label:'',notes:''};connections.push(c);return c;}
- case 'set_location':Object.assign(connections.find(c=>c.id===p.p_id),{latitude:p.p_latitude,longitude:p.p_longitude});return null;
- case 'update_connection':Object.assign(connections.find(c=>c.id===p.p_id),{label:p.p_label,notes:p.p_notes});return null;
- case 'get_connection':return{connection:connections.find(c=>c.id===p.p_id),events:events.filter(e=>e.connection_id===p.p_id),messages:messages.filter(m=>m.connection_id===p.p_id)};
- case 'record_event':{
-  if(!failedEvent && p.p_token===null){failedEvent=true;throw Object.assign(new Error('Temporary outage'),{status:503});}
-  const c=p.p_token&&connections.find(c=>c.invite_token===p.p_token);
-  if(p.p_token&&!c)throw Object.assign(new Error('Invalid invitation'),{status:400});
-  if(!events.some(e=>e.id===p.p_id)) events.push({id:p.p_id,kind:p.p_kind,details:p.p_details,visitor_id:p.p_visitor_id,connection_id:c?.id||null,created_at:now()});return null;
- }
- case 'send_message':messages.push({id:messages.length+1,connection_id:p.p_id,body:p.p_body,url:p.p_url,created_at:now()});return null;
- case 'get_messages':{const c=connections.find(c=>c.invite_token===p.p_token);if(!c)throw Object.assign(new Error('Invalid invitation'),{status:400});return messages.filter(m=>m.connection_id===c.id&&m.id>p.p_after).map(({connection_id,...m})=>m);}
- case 'get_public_events':return events.filter(e=>!e.connection_id).reverse();
- case 'report_bug':if(!bugs.some(b=>b.id===p.p_id))bugs.push({id:p.p_id,description:p.p_description,context:p.p_context,created_at:now()});return null;
- case 'list_bugs':return bugs;
- default:throw new Error('Unhandled '+name);
- }
-}
+const calls=[];
+let pauseRefresh=false, releaseRefresh=null;
+const mock=createMockBackend({failFirstPublicEvent:true});
+const {api,events,messages,bugs,connections}=mock;
 async function page(ctx,hash,installed=false){
  const {targetId}=await browser.call('Target.createTarget',{url:'about:blank',browserContextId:ctx});
  const list=await fetch('http://'+new URL(endpoint).host+'/json/list').then(r=>r.json());
@@ -75,7 +55,7 @@ async function page(ctx,hash,installed=false){
   let status=200,result;
   try{
    if(request.method==='OPTIONS')result=null;
-   else {const p=JSON.parse(request.postData||'{}'),name=new URL(request.url).pathname+new URL(request.url).search;const authorized=Object.entries(request.headers).some(([k,v])=>k.toLowerCase()==='authorization'&&v==='Bearer owner-access');calls.push({ctx,name,p,authorized});result=api(name,p,authorized);}
+   else {const p=JSON.parse(request.postData||'{}'),name=new URL(request.url).pathname+new URL(request.url).search;const authorized=Object.entries(request.headers).some(([k,v])=>k.toLowerCase()==='authorization'&&v==='Bearer owner-access');calls.push({ctx,name,p,authorized});if(pauseRefresh&&name.includes('grant_type=refresh_token'))await new Promise(resolve=>{releaseRefresh=resolve;});result=api(name,p,authorized);}
   }catch(err){status=err.status||500;result={message:err.message};}
   try{await client.call('Fetch.fulfillRequest',{requestId,responseCode:status,responseHeaders:[{name:'Content-Type',value:'application/json'},{name:'Access-Control-Allow-Origin',value:'*'},{name:'Access-Control-Allow-Headers',value:'*'},{name:'Access-Control-Allow-Methods',value:'POST,OPTIONS'}],body:Buffer.from(JSON.stringify(result)).toString('base64')});}catch{}
  });
@@ -91,13 +71,13 @@ try {
  await publicPage.eval(`document.querySelector('.link').addEventListener('click',e=>e.preventDefault());document.querySelector('.link').click();`);
  await wait(()=>events.some(e=>!e.connection_id&&e.kind==='contact_click'));
  assert.ok(!calls.some(c=>c.ctx===publicCtx&&/get_|list_/.test(c.name)),'Unsolicited visitors must never read data');
- assert.ok(failedEvent,'Failed write exercised retry queue');
+ assert.ok(mock.failedEvent,'Failed write exercised retry queue');
  console.log('PASS public UI events, failed-write retry, no public reads');
  const {browserContextId:ownerCtx}=await browser.call('Target.createBrowserContext');
  const ownerPage=await page(ownerCtx,'#/owner',true);
  await browser.call('Browser.grantPermissions',{origin,permissions:['geolocation'],browserContextId:ownerCtx});
  await ownerPage.call('Emulation.setGeolocationOverride',{latitude:29.9627,longitude:-90.0606,accuracy:20});
- await ownerPage.eval(`document.querySelector('[name=email]').value='owner@example.org';document.querySelector('[name=password]').value='test-password';document.getElementById('owner-login').requestSubmit();`);
+ await ownerPage.eval(`document.querySelector('[name=email]').value='demo@example.org';document.querySelector('[name=password]').value='demo';document.getElementById('owner-login').requestSubmit();`);
  await wait(()=>ownerPage.eval(`!document.getElementById('owner-tools').hidden`));
  await ownerPage.eval(`document.getElementById('new-session').click()`);
  await wait(()=>connections.length===1&&ownerPage.eval(`location.hash==='#/qr'`));
@@ -109,15 +89,53 @@ try {
  console.log('PASS owner sign-in, conversation creation, private location and rendered QR decoding');
  const {browserContextId:guestCtx}=await browser.call('Target.createBrowserContext');
  const guest=await page(guestCtx,'#/meet/'+c.invite_token);
+ assert.ok(await guest.eval(`document.getElementById('owner-entry')===null&&!document.getElementById('invitee-conversation').open`));
  await wait(()=>events.some(e=>e.connection_id===c.id&&e.kind==='page_open'));
  await guest.eval(`document.querySelector('.choice').click()`);
  assert.equal(await guest.eval('location.hash'),'#/meet/'+c.invite_token+'/professional');
  await guest.eval(`document.querySelector('.link').addEventListener('click',e=>e.preventDefault());document.querySelector('.link').click()`);
  await wait(()=>events.some(e=>e.connection_id===c.id&&e.kind==='contact_click'));
+ assert.deepEqual(events.find(e=>e.connection_id===c.id&&e.kind==='contact_click').details.path,['Professional','Email']);
+ await guest.eval(`location.hash='#/meet/${c.invite_token}/personal/friends/close'`);
+ await wait(()=>guest.eval(`document.querySelector('[data-category-panel="personal/friends/close"]').classList.contains('is-active')`));
+ await guest.eval(`const a=document.querySelector('[data-category-panel="personal/friends/close"] a.link');a.addEventListener('click',e=>e.preventDefault());a.click();`);
+ await wait(()=>events.some(e=>e.details.path?.join(' > ')==='Personal > Friends > Close > Phone > Call'));
+ await guest.eval(`document.getElementById('floating-back').click()`);
+ assert.equal(await guest.eval('location.hash'),'#/meet/'+c.invite_token+'/personal/friends');
+ assert.ok(await guest.eval(`Array.from(document.querySelectorAll('a.link')).every(a=>a.target==='_blank'&&a.rel.includes('noopener'))`));
+ await guest.eval(`location.hash='#/meet/${c.invite_token}/personal/friends/close'`);
+ await wait(()=>guest.eval(`document.querySelector('[data-category-panel="personal/friends/close"]').classList.contains('is-active')`));
+ assert.ok(await guest.eval(`document.querySelector('[data-category-panel="personal/friends/close"] a[href^="sms:"]').getAttribute('href')==='sms:+15555550123'`));
+ await guest.eval(`{const textLink=document.querySelector('[data-category-panel="personal/friends/close"] a[href^="sms:"]');textLink.addEventListener('click',e=>e.preventDefault());textLink.click();}`);
+ await wait(()=>events.some(e=>e.details.path?.join(' > ')==='Personal > Friends > Close > Phone > Text'));
+ console.log('PASS external tab targets and separate Call/Text events');
+ console.log('PASS three roots, nested invitation routes, complete contact hierarchy and parent navigation');
  await ownerPage.eval(`location.hash='#/owner'`);
  await wait(()=>ownerPage.eval(`!document.getElementById('session-editor').hidden`));
  await ownerPage.eval(`document.getElementById('session-label').value='Meetup person';document.getElementById('session-notes').value='Owner-only meeting detail 7f3c';document.getElementById('session-notes').dispatchEvent(new Event('input'));document.getElementById('notes-form').requestSubmit()`);
  await wait(()=>c.notes==='Owner-only meeting detail 7f3c');
+ assert.ok(await ownerPage.eval(`document.getElementById('owner-status').textContent==='Conversation: Meetup person'`));
+ await ownerPage.eval(`location.hash='#/professional'`);
+ await wait(()=>ownerPage.eval(`document.querySelector('[data-category-panel="professional"]').classList.contains('is-active')`));
+ await ownerPage.eval(`document.getElementById('qr-nav').click()`);
+ assert.equal(await ownerPage.eval('location.hash'),'#/owner');
+ await ownerPage.eval(`document.getElementById('show-session-qr').click()`);
+ assert.equal(await ownerPage.eval('location.hash'),'#/qr');
+ assert.equal(await ownerPage.eval(`document.getElementById('qr-session-label').textContent`),'Meetup person');
+ assert.equal(await ownerPage.eval(`document.getElementById('qr-session-created').dateTime`),c.created_at);
+ await ownerPage.eval(`location.hash='#/owner'`);
+ console.log('PASS signed-in QR navigation selects a conversation first; QR shows saved name and creation time');
+
+ assert.ok(await ownerPage.eval(`document.getElementById('session-editor').tagName==='DETAILS'&&document.getElementById('session-editor').contains(document.getElementById('conversation-messages'))`));
+ assert.ok(await ownerPage.eval(`document.getElementById('owner-tools').firstElementChild.querySelector('#new-session')!==null&&document.getElementById('owner-tools').children[1].querySelector('#session-list')!==null`));
+ await ownerPage.eval(`window.savedGeolocation=navigator.geolocation.getCurrentPosition;navigator.geolocation.getCurrentPosition=(ok,fail)=>fail({code:3,message:'Timed out'});document.getElementById('retry-location').click()`);
+ await wait(()=>ownerPage.eval(`document.getElementById('session-info').textContent.includes('timed out')`));
+ await ownerPage.eval(`navigator.geolocation.getCurrentPosition=window.savedGeolocation;document.getElementById('retry-location').click()`);
+ await wait(()=>ownerPage.eval(`document.getElementById('session-info').textContent.includes('29.96270')&&!document.getElementById('retry-location').disabled`));
+ await wait(()=>ownerPage.eval(`document.getElementById('session-events').textContent.includes('Location updated · from')`));
+ assert.ok(events.some(e=>e.kind==='location_update'&&e.details.from.latitude===29.9627&&e.details.to.latitude===29.9627));
+ console.log('PASS conversation nesting, recent conversations first, named status, location retry and from/to history');
+
  writeFileSync(join(root,'meeting-tools.png'),Buffer.from((await ownerPage.call('Page.captureScreenshot',{format:'png'})).data,'base64'));
  await ownerPage.eval(`document.getElementById('message-body').value='<img src=x onerror=alert(1)> Project discussed';document.getElementById('message-url').value='https://example.org/project';document.getElementById('message-form').requestSubmit()`);
  await wait(()=>messages.length===1);
@@ -133,7 +151,40 @@ try {
  console.log('PASS invited routes, contact events, private notes, live message/link delivery and receipt');
  const reopened=await page(guestCtx,'#/meet/'+c.invite_token);
  await reopened.call('Page.bringToFront');await wait(()=>reopened.eval(`document.querySelector('#shared-list a')!==null`));
- console.log('PASS shared messages persist on reopening invitation');
+ await wait(()=>reopened.eval(`document.getElementById('shared-heading').textContent==='Conversation with Meetup person'`));
+ assert.ok(await reopened.eval(`!document.getElementById('shared-status').textContent.includes('These messages')`));
+ console.log('PASS shared messages persist on reopening invitation and use the saved conversation name');
+ await reopened.eval(`document.getElementById('invitee-message-body').value='<img src=x onerror=alert(1)> Invitee reply';document.getElementById('invitee-message-body').dispatchEvent(new Event('input'));document.getElementById('invitee-message-form').requestSubmit()`);
+ await wait(()=>messages.some(m=>m.sender==='invitee'));
+ await wait(()=>reopened.eval(`document.getElementById('shared-list').textContent.includes('Invitee reply')`));
+ assert.equal(await reopened.eval(`document.querySelectorAll('#shared-list img').length`),0);
+ await ownerPage.call('Page.bringToFront');
+ await wait(()=>ownerPage.eval(`document.getElementById('owner-messages').textContent.includes('Invitee reply')`));
+ assert.ok(await ownerPage.eval(`document.getElementById('owner-messages').textContent.includes('Invitee')`));
+ const reopenedReply=await page(guestCtx,'#/meet/'+c.invite_token);
+ await reopenedReply.call('Page.bringToFront');
+ await wait(()=>reopenedReply.eval(`document.getElementById('shared-list').textContent.includes('Invitee reply')`));
+ assert.ok(!events.some(e=>e.kind==='message_received'&&e.details.message_id===messages.find(m=>m.sender==='invitee').id));
+ console.log('PASS invitee replies, sender labels, safe rendering, owner delivery and persistence');
+ await ownerPage.call('Page.bringToFront');
+ assert.ok(await ownerPage.eval(`document.querySelector('#owner-messages > li').textContent.includes('Invitee reply')`));
+ const publicGroups=new Set(events.filter(e=>!e.connection_id).map(e=>e.visitor_id)).size;
+ await ownerPage.eval(`document.getElementById('session-editor').open=false;document.getElementById('conversation-messages').open=false;document.getElementById('conversation-activity').open=false;document.getElementById('public-activity').open=true`);
+ await wait(()=>ownerPage.eval(`document.querySelectorAll('#public-events details').length===${publicGroups}`));
+ assert.ok(await ownerPage.eval(`!document.querySelector('#public-events details').open`));
+ const secondVisitor=crypto.randomUUID();
+ events.push({id:crypto.randomUUID(),visitor_id:secondVisitor,connection_id:null,kind:'page_open',details:{},created_at:new Date().toISOString()});
+ await ownerPage.eval(`document.querySelector('#public-events details').open=true;document.getElementById('public-activity').open=false`);
+ await new Promise(r=>setTimeout(r,100));
+ await ownerPage.eval(`document.getElementById('public-activity').open=true`);
+ await wait(()=>ownerPage.eval(`document.querySelectorAll('#public-events details').length===${publicGroups+1}`));
+ assert.equal(await ownerPage.eval(`document.querySelectorAll('#public-events details[open]').length`),1);
+ assert.equal(await ownerPage.eval(`document.querySelector('#public-events details').dataset.visitor`),secondVisitor);
+ await new Promise(r=>setTimeout(r,3200));
+ assert.ok(await ownerPage.eval(`!document.getElementById('session-editor').open&&!document.getElementById('conversation-messages').open&&!document.getElementById('conversation-activity').open`));
+ console.log('PASS newest messages, persistent collapsed sections, and visitor groups closed by default');
+
+
  await ownerPage.call('Page.bringToFront');
  await ownerPage.call('Network.enable');
  await ownerPage.call('Network.emulateNetworkConditions',{offline:true,latency:0,downloadThroughput:0,uploadThroughput:0});
@@ -149,6 +200,29 @@ try {
  await relaunched.eval(`location.hash='#/owner'`);await new Promise(r=>setTimeout(r,300));await relaunched.eval(`location.hash='#/qr'`);
  assert.equal(connections.length,2,'Returning to QR must preserve current conversation');
  console.log('PASS installed owner launch creates a fresh conversation; navigation preserves it');
+ assert.ok(await relaunched.eval(`document.getElementById('qr-owner-tools').hidden`));
+ await relaunched.eval(`for(let i=0;i<4;i++)document.querySelector('.qr-domain').click()`);
+ assert.equal(await relaunched.eval('location.hash'),'#/qr');
+ await new Promise(r=>setTimeout(r,3100));
+ await relaunched.eval(`for(let i=0;i<4;i++)document.querySelector('.qr-domain').click()`);
+ assert.equal(await relaunched.eval('location.hash'),'#/qr');
+ await relaunched.eval(`document.querySelector('.qr-domain').click()`);
+ assert.equal(await relaunched.eval('location.hash'),'#/owner');
+ console.log('PASS compact conversation and hidden tools shortcut requiring five taps within three seconds');
+ await relaunched.eval(`window.inlineInjectionRan=false;const injected=document.createElement('script');injected.textContent='window.inlineInjectionRan=true';document.body.append(injected);`);
+ assert.equal(await relaunched.eval('window.inlineInjectionRan'),false,'CSP blocks injected inline scripts');
+ await relaunched.eval(`const key=Object.keys(localStorage).find(k=>k.endsWith(':auth'));const state=JSON.parse(localStorage.getItem(key));state.expires_at=0;localStorage.setItem(key,JSON.stringify(state));`);
+ pauseRefresh=true;
+ const refreshingPage=await page(ownerCtx,'#/owner');
+ await wait(()=>releaseRefresh!==null);
+ await refreshingPage.eval(`document.getElementById('owner-logout').click()`);
+ pauseRefresh=false;releaseRefresh();
+ await wait(()=>refreshingPage.eval(`!Object.keys(localStorage).some(k=>k.endsWith(':auth'))`));
+ await new Promise(r=>setTimeout(r,500));
+ assert.ok(await refreshingPage.eval(`document.getElementById('owner-tools').hidden&&!Object.keys(localStorage).some(k=>k.endsWith(':auth'))`));
+ console.log('PASS CSP script injection defense and sign-out during in-flight token refresh');
+
+
  console.log('Screenshots and fixture: '+root);
 } finally {
  clients.forEach(c=>c.close());await browser.call('Browser.close').catch(()=>{});browser.close();chrome.kill();await new Promise(r=>server.close(r));

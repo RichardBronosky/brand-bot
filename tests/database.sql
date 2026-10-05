@@ -10,6 +10,11 @@ create function auth.uid() returns uuid language sql stable as
 grant usage on schema auth to anon, authenticated;
 grant execute on function auth.uid() to anon, authenticated;
 \ir ../supabase/schema.sql
+\ir ../supabase/migrations/002_invitee_messages.sql
+\ir ../supabase/migrations/003_conversation_label.sql
+\ir ../supabase/migrations/004_location_history.sql
+\ir ../supabase/migrations/005_public_message_projection.sql
+\ir ../supabase/audit.sql
 insert into auth.users values ('11111111-1111-4111-8111-111111111111'), ('22222222-2222-4222-8222-222222222222'), ('33333333-3333-4333-8333-333333333333');
 insert into brand.owners values ('11111111-1111-4111-8111-111111111111'), ('22222222-2222-4222-8222-222222222222');
 create function public.expect_failure(query text, expected_state text) returns void language plpgsql as $$
@@ -52,6 +57,7 @@ select public.brand_create_connection() as connection \gset
 select (:'connection'::jsonb->>'id') as id, (:'connection'::jsonb->>'invite_token') as token \gset
 select public.brand_update_connection(:'id','Person at meetup','Private note never exposed to guest');
 select public.brand_set_location(:'id',29.96,-90.06,25);
+select public.brand_set_location(:'id',30,-91,10);
 select public.brand_send_message(:'id','Project we discussed','https://example.org/project');
 select public.brand_report_bug('dddddddd-dddd-4ddd-8ddd-dddddddddddd',:'id','QR screen problem','{"screen":"qr"}');
 select expect_failure(format('select public.brand_send_message(%L,%L,%L)', :'id','Unsafe URL','javascript:alert(1)'), '23514');
@@ -73,11 +79,30 @@ select expect_failure(format('select public.brand_send_message(%L,%L,null)', :'i
 reset role;
 select set_config('test.messages', :'messages', false);
 do $$declare m jsonb := current_setting('test.messages')::jsonb; begin
-  if jsonb_array_length(m) <> 1 or m::text like '%Private note%' or m::text like '%latitude%' or m::text like '%invite_token%' then
+  if jsonb_array_length(m) <> 1 or m::text like '%Private note%' or m::text like '%latitude%' or m::text like '%invite_token%' or m::text like '%request_id%' or m::text like '%connection_id%' then
     raise exception 'Guest message scope failed';
   end if;
   if (select count(*) from brand.connections) <> 1 then raise exception 'Public event created a conversation'; end if;
-  if (select count(*) from brand.events) <> 2 then raise exception 'Invited event not recorded'; end if;
+  if (select count(*) from brand.events where kind <> 'location_update') <> 2 then raise exception 'Invited event not recorded'; end if;
 end$$;
+do $$ begin
+ if (select count(*) from brand.events where kind='location_update') <> 2 then raise exception 'Location audit missing or failed write logged'; end if;
+ if not exists (select 1 from brand.events where kind='location_update' and details->'from'->>'latitude'='29.96' and details->'to'->>'latitude'='30') then raise exception 'Location history lost'; end if;
+end $$;
+set role anon;
+select expect_failure(format('select public.brand_record_event(gen_random_uuid(),gen_random_uuid(),%L,''location_update'',''{}'')', :'token'),'P0001');
+reset role;
 \o
+set role anon;
+select expect_failure('select public.brand_send_invitee_message(null,''No invitation'',gen_random_uuid())','P0001');
+select expect_failure('select public.brand_send_invitee_message(gen_random_uuid(),''Bad invitation'',gen_random_uuid())','P0001');
+select expect_failure(format('select public.brand_send_invitee_message(%L,%L,gen_random_uuid())', :'token','   '),'P0001');
+select expect_failure(format('select public.brand_send_invitee_message(%L,repeat(''x'',4001),gen_random_uuid())', :'token'),'23514');
+select gen_random_uuid() as request_id \gset
+select public.brand_send_invitee_message(:'token','Invitee reply',:'request_id');
+select public.brand_send_invitee_message(:'token','Invitee reply',:'request_id');
+reset role;
+do $$ begin
+ if (select count(*) from brand.messages where sender='invitee' and body='Invitee reply') <> 1 then raise exception 'Invitee retry duplicated'; end if;
+end $$;
 \echo PASS: public event-only writes, token-scoped messages, owner isolation, constraints and retries

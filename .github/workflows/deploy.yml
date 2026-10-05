@@ -18,6 +18,7 @@ concurrency:
 
 jobs:
   build:
+    if: github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -43,7 +44,8 @@ jobs:
         env:
           BRAND_CONFIG: ${{ vars.BRAND_CONFIG }}
         run: |
-          sudo apt-get update -qq && sudo apt-get install -y -qq qrencode zbar-tools
+          sudo apt-get update -qq && sudo apt-get install -y -qq qrencode zbar-tools postgresql
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
           domain=$(node -e 'console.log(JSON.parse(process.env.BRAND_CONFIG).domain)')
           url="https://$domain/"
           qrencode -t SVG -o qr.svg -m 2 -s 8 --level=M "$url"
@@ -55,6 +57,17 @@ jobs:
           fi
           echo "qr.svg -> $got"
 
+      - name: Verify build and offline cache
+        run: node tests/build.mjs
+
+      - name: Verify SQL permissions
+        run: bash tests/database.sh
+
+      - name: Verify browser flows and QR scanning
+        env:
+          CHROMIUM: google-chrome
+        run: node tests/browser.mjs
+
       - name: Build
         env:
           BRAND_CONFIG: ${{ vars.BRAND_CONFIG }}
@@ -65,6 +78,7 @@ jobs:
           path: dist
 
   deploy:
+    if: github.ref == 'refs/heads/main'
     needs: build
     runs-on: ubuntu-latest
     environment:

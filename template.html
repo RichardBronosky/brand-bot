@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="{{CSP}}">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>{{NAME}}</title>
 <meta name="description" content="{{NAME}} — how to connect.">
@@ -205,16 +206,26 @@
     position: fixed;
     top: max(.75rem, env(safe-area-inset-top));
     right: max(.75rem, env(safe-area-inset-right));
-    z-index: 5;
+    z-index: 20;
     display: inline-flex;
     align-items: center;
     justify-content: center;
     width: 44px;
     height: 44px;
     border-radius: 10px;
-    color: var(--muted);
+    color: var(--fg);
+    background: rgba(128, 128, 128, .18);
+    border: 1px solid rgba(128, 128, 128, .3);
+    backdrop-filter: blur(8px);
+    -webkit-backdrop-filter: blur(8px);
     text-decoration: none;
   }
+  .back-toggle { right: auto; left: max(.75rem, env(safe-area-inset-left)); font-size: 1.6rem; }
+  .phone-options summary { cursor: pointer; list-style: none; }
+  .phone-options summary::after { content: "⌄"; margin-left: auto; }
+  .phone-options[open] summary::after { content: "⌃"; }
+  .phone-options summary::-webkit-details-marker { display: none; }
+  .phone-options > .links { padding-left: 1rem; margin-top: .5rem; }
   .qr-toggle:hover { color: var(--fg); background: var(--card); }
   .qr-toggle:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
@@ -265,6 +276,9 @@
   }
 
   .qr-domain {
+    border: 0; background: none; padding: .25rem; font: inherit; cursor: pointer;
+    touch-action: manipulation;
+
     margin: 0;
     color: var(--muted);
     font-size: .85rem;
@@ -299,12 +313,14 @@
 </head>
 <body>
 
-<a class="qr-toggle" href="#/qr" aria-label="Show QR code">
+<a id="qr-nav" class="qr-toggle" href="#/qr" aria-label="Show QR code">
   <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="currentColor">
     <path d="M3 3h8v8H3V3zm2 2v4h4V5H5zm-2 8h8v8H3v-8zm2 2v4h4v-4H5zM13 3h8v8h-8V3zm2 2v4h4V5h-4z"/>
     <path d="M13 13h3v3h-3v-3zm5 0h3v3h-3v-3zm-5 5h3v3h-3v-3zm5 0h3v3h-3v-3z"/>
   </svg>
 </a>
+
+<a id="floating-back" class="qr-toggle back-toggle" href="#/" aria-label="Back" hidden><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M19 12H5m7-7-7 7 7 7"/></svg></a>
 
 <main>
   <header>
@@ -313,9 +329,15 @@
   </header>
 
   <section id="shared-messages" hidden aria-labelledby="shared-heading">
-    <h2 id="shared-heading">Shared with you</h2>
-    <p id="shared-status" role="status"></p>
+    <details id="invitee-conversation"><summary id="shared-heading">Conversation with Bruno</summary>
+    <p id="shared-status" role="status" hidden></p>
     <ul id="shared-list" class="message-list"></ul>
+    <form id="invitee-message-form" hidden>
+      <label>Message<textarea id="invitee-message-body" maxlength="4000" required placeholder="Send a message"></textarea></label>
+      <button type="submit">Send message</button>
+      <p id="invitee-message-status" role="status" aria-live="polite"></p>
+    </form>
+    </details>
   </section>
 
   <section id="panel-owner" class="panel" aria-labelledby="owner-heading">
@@ -332,8 +354,13 @@
         <button id="new-session" type="button">New conversation QR</button>
         <button id="show-session-qr" type="button" hidden>Show this QR</button>
       </div>
-      <p id="session-info"></p>
-      <div id="session-editor" hidden>
+      <details open><summary>Recent conversations</summary><ul id="session-list" class="event-list"></ul></details>
+      <details id="session-editor" hidden open>
+        <summary id="current-conversation-heading">Current conversation</summary>
+        <p id="session-info"></p>
+        <button id="retry-location" type="button">Record location</button>
+        <label>Invitation link<input id="session-link" readonly aria-label="Invitation link"></label>
+        <button id="copy-session-link" type="button">Copy invitation link</button>
         <form id="notes-form">
           <label>Name / conversation<input id="session-label" maxlength="200"></label>
           <label>Private notes<textarea id="session-notes" rows="4" maxlength="20000"></textarea></label>
@@ -345,73 +372,37 @@
           <label>Project URL (optional)<input id="message-url" type="url" maxlength="2000" placeholder="https://…"></label>
           <button type="submit">Send to their page</button>
         </form>
-        <h3>Shared messages</h3>
-        <ul id="owner-messages" class="message-list"></ul>
-        <h3>Recent activity</h3>
-        <p class="activity-help">Link taps show intent; they do not confirm a sent message, follow, or saved contact.</p>
-        <ul id="session-events" class="event-list" aria-live="polite"></ul>
-      </div>
-      <details open><summary>Recent conversations</summary><ul id="session-list" class="event-list"></ul></details>
+        <details id="conversation-messages" open>
+          <summary>Shared messages</summary>
+          <ul id="owner-messages" class="message-list"></ul>
+        </details>
+        <details id="conversation-activity" open>
+          <summary>Recent activity</summary>
+          <p class="activity-help">Link taps show intent; they do not confirm a sent message, follow, or saved contact.</p>
+          <ul id="session-events" class="event-list" aria-live="polite"></ul>
+        </details>
+      </details>
       <details id="public-activity"><summary>Public contact activity</summary><ul id="public-events" class="event-list"></ul></details>
       <details id="bug-history"><summary>Saved bug reports</summary><ul id="bug-list" class="event-list"></ul></details>
       <button id="owner-logout" type="button">Sign out</button>
     </div>
-    <a class="back" href="#/">← My card</a>
+
   </section>
 
-  <!-- choose -->
-  <section id="panel-home" class="panel" aria-labelledby="prompt-home">
-    <p class="prompt" id="prompt-home">How do you know me?</p>
-    <div class="choices">
-      <a class="choice" href="#/professional">
-        <span class="ico" aria-hidden="true">{{PRO_ICON}}</span>
-        <span class="txt">
-          <span class="lbl">{{PRO_LABEL}}</span>
-          <span class="sub">{{PRO_BLURB}}</span>
-        </span>
-      </a>
-      <a class="choice" href="#/personal">
-        <span class="ico" aria-hidden="true">{{PER_ICON}}</span>
-        <span class="txt">
-          <span class="lbl">{{PER_LABEL}}</span>
-          <span class="sub">{{PER_BLURB}}</span>
-        </span>
-      </a>
-    </div>
-  </section>
-
-  <!-- professional -->
-  <section id="panel-professional" class="panel" aria-labelledby="prompt-pro">
-    <p class="prompt" id="prompt-pro">{{PRO_LABEL}}</p>
-    <ul class="links">
-{{PRO_LINKS}}
-    </ul>
-{{VCARD}}
-    <button class="back" type="button" data-back>← Back</button>
-  </section>
-
-  <!-- personal -->
-  <section id="panel-personal" class="panel" aria-labelledby="prompt-per">
-    <p class="prompt" id="prompt-per">{{PER_LABEL}}</p>
-    <ul class="links">
-{{PER_LINKS}}
-    </ul>
-{{VCARD}}
-    <button class="back" type="button" data-back>← Back</button>
-  </section>
-
+{{CATEGORY_PANELS}}
 
   <!-- qr -->
   <section id="panel-qr" class="panel panel-qr" aria-labelledby="prompt-qr">
     <div class="qr-stage">
       <p class="qr-name">{{NAME}}</p>
       <div class="qr-code" id="qr-code">{{QR_SVG}}</div>
-      <p class="qr-domain">{{DOMAIN}}</p>
+      <div id="qr-session-meta" hidden><p id="qr-session-label" hidden></p><time id="qr-session-created"></time><p id="qr-session-age"></p></div>
+      <button class="qr-domain" type="button">{{DOMAIN}}</button>
+      <a id="qr-owner-tools" class="back" href="#/owner" hidden>Meeting Tools</a>
     </div>
     <div class="qr-actions">
       <p id="qr-status" role="status"></p>
-      <a id="qr-owner-tools" class="back" href="#/owner" hidden>Meeting tools</a>
-      <button class="back" type="button" data-back>← My card</button>
+
       <p class="qr-hint" id="prompt-qr">
         <span class="qr-hint-step">Screenshot this screen.</span>
         <span class="qr-hint-os" data-os-hint></span>
@@ -423,7 +414,7 @@
 <!-- Built with brand-bot — https://github.com/RichardBronosky/brand-bot -->
 {{CREDIT}}
 
-<a id="owner-entry" class="owner-entry" href="#/owner" hidden>My meeting tools</a>
+
 <button id="bug-toggle" type="button" hidden>Report a problem</button>
 <dialog id="bug-dialog">
   <form id="bug-form">

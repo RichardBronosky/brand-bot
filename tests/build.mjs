@@ -8,7 +8,7 @@ import assert from 'node:assert/strict';
 const source = dirname(dirname(fileURLToPath(import.meta.url)));
 const root = mkdtempSync(join(tmpdir(), 'brand-build-test-'));
 mkdirSync(join(root, 'vendor'));
-for (const f of ['build.mjs', 'template.html', 'sw.js', 'app.js', 'app.css', 'vendor/qrcodegen.js', 'qr.svg']) copyFileSync(join(source, f), join(root, f));
+for (const f of ['categories.mjs', 'build.mjs', 'template.html', 'sw.js', 'app.js', 'app.css', 'vendor/qrcodegen.js', 'qr.svg']) copyFileSync(join(source, f), join(root, f));
 const base = { name: 'Test Person', domain: 'test.example.org' };
 let previousCache = 'brand-bot-v1';
 for (const enabled of [false, true, false, true]) {

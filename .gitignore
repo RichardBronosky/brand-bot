@@ -4,6 +4,7 @@ node_modules/
 # Your real config. Never committed — it lives in the GitHub repo variable
 # (brand-bot push-config) so that forks and clones do not carry your identity.
 config.json
+db-pw.txt
 
 # Build output. Rendered by the Action and deployed straight to Pages.
 dist/
@@ -11,3 +12,8 @@ dist/
 # Generated from your config domain — not committed, so a fork never
 # inherits a QR pointing at someone else's card. Run: ./brand-bot qr
 qr.svg
+
+# Isolated feature preview and local database connection metadata.
+config.preview.json
+preview-dist/
+supabase.local.json

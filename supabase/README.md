@@ -8,8 +8,10 @@ CAPTCHA, visitor authentication, or separate application server is required.
 
 1. Create a free Supabase project. Enable its Data API with `public` exposed.
    Keep the `brand` schema **unexposed**.
-2. Run [schema.sql](schema.sql) once in the dashboard SQL editor. It creates
-   private tables and narrowly granted public RPC functions.
+2. Run [schema.sql](schema.sql) once, then every SQL file in
+   [migrations/](migrations/) in filename order (002 through 005). This creates
+   private tables and narrowly granted public RPC functions. On an existing
+   project, apply only migrations that have not already been run.
 3. In Authentication → Users, create your owner account with an email and
    password. Use a confirmed account. Disable public user sign-ups; visitors do
    not use Auth. Leave CAPTCHA disabled. Copy the owner's user UUID.
@@ -126,3 +128,86 @@ On a configured project, check two separate browsers: sign in only on your
 phone, generate an invitation, scan on the second browser, tap a contact link,
 share a URL, and reopen the invitation. Check that an uninvited visit only adds
 public UI events and that a signed-in non-owner cannot use meeting tools.
+
+## Isolated feature preview
+
+Put backend settings in gitignored `config.preview.json`, keeping production
+`config.json` and the GitHub `BRAND_CONFIG` variable unchanged. Run
+`./brand-bot preview 8767`; it builds into `preview-dist/`. Production deployment
+jobs only run for `main`, including manually dispatched workflows.
+
+Local database setup uses gitignored `supabase.local.json`:
+
+```json
+{"connection":"postgresql://postgres@db.PROJECT.supabase.co:5432/postgres?sslmode=require"}
+```
+
+Keep the password in `db-pw.txt`. `node supabase/connect.mjs check` checks the
+connection, `install` runs the schema once, `users` lists Auth UUIDs, and
+`owner UUID` grants an existing Auth user access. The password is passed through
+the subprocess environment, never command arguments or application assets.
+
+## Recursive contact categories
+
+Existing `professional` and `personal` configurations still work. An optional
+`categories` array replaces them with any number of root categories. Each node
+has a stable lowercase `id`, display `label`, optional `icon`/`blurb`, contact
+`links`, and another `categories` array for nesting. For example:
+
+```json
+"categories": [
+  {"id":"personal","label":"Personal","categories":[
+    {"id":"friends","label":"Friends","links":[
+      {"label":"Phone","href":"tel:+15555550123"}
+    ]}
+  ]},
+  {"id":"community","label":"Community","links":[]}
+]
+```
+
+Contact events store both the full display path (including link label) and
+category IDs. The timeline displays `Tapped Personal > Friends > Phone`.
+Invitation routes and parent navigation preserve the conversation at every
+level. Historic events without a path keep displaying their original label.
+
+Phone links (`tel:`) expand into Call and Text actions automatically. Text uses
+`sms:` with the same number. Events include the selected action in the full
+contact path. External contact and shared links open in a new browser tab;
+phone, text, and email links are handed to the device’s chosen app.
+
+## Invitee messages
+
+Apply `migrations/002_invitee_messages.sql` once to existing projects. Invitees
+with a valid invitation can send text (up to 4,000 characters); uninvited
+visitors still cannot send messages. Both sides see the persistent conversation
+with sender labels. The owner view polls the selected conversation as before.
+Drafts are saved locally per invitation. Sending requires a connection and
+shows success only after the database save; retries use a request UUID to avoid
+duplicates if a response is lost. No CAPTCHA or visitor sign-in is required.
+
+Owner shared messages and recent activity are collapsible and show newest
+items first. Public activity groups the latest events by device-local visitor
+UUID, with each group closed initially. A visitor UUID identifies a browser
+profile, not a person; another device or cleared storage creates another ID.
+
+Invitation holders can retrieve the saved conversation label for the heading.
+Private notes, location, and owner account details remain inaccessible.
+
+The invitee Conversation panel starts collapsed. Owner tools are reached from
+QR view by tapping the domain five times within three seconds. Optional
+`showMeetingTools` defaults to `true` and shows an explicit Meeting Tools link
+under the domain; set it to `false` to hide that link. This shortcut only changes
+navigation; owner Auth and SQL permissions still control access.
+
+The owner view lists Recent conversations first and nests private notes,
+messages, and activity under a collapsible current conversation. Location
+requests allow 30 seconds for a fresh accurate fix without delaying the QR.
+Failures show a reason and Record location lets the owner retry for the
+selected conversation; permission alone does not guarantee a location fix.
+
+Apply `migrations/004_location_history.sql` once to add location history.
+Every saved location (including initial capture) creates a private audit event
+with previous/new coordinates and accuracy. The database locks the conversation
+and saves the location plus audit event in one transaction. Visitor telemetry
+cannot create location audit events. Historic updates before this migration
+cannot be reconstructed.
