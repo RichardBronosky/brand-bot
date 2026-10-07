@@ -268,6 +268,14 @@ clipped off-screen. A 200 response is not evidence the page is correct.
 
 ---
 
+## Related sites on bronosky.com
+
+brand-bot is served from its own subdomain (`bruno.bronosky.com`) and does not
+touch anything under `bronosky.com/`. In particular, the resume at
+<https://bronosky.com/resume/> is a separate project, deployed from
+[RichardBronosky/resume](https://github.com/RichardBronosky/resume#publishing-bronoskycomresume)
+by its own Pages workflow (it no longer uses a `gh-pages` branch).
+
 ## Questions, or want help setting one up?
 
 Bruno Bronosky — [bruno.bronosky.com](https://bruno.bronosky.com/).
